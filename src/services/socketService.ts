@@ -13,7 +13,7 @@ const socketsByUser = new Map<string, Set<string>>();
 export function initSocket(server: HttpServer) {
   io = new Server(server, {
     cors: {
-      origin: env.isProd ? env.clientUrl : true,
+      origin: env.isProd ? env.corsOrigins : true,
       credentials: true,
     },
     path: '/socket.io',

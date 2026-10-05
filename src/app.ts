@@ -38,7 +38,7 @@ export function createApp() {
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           imgSrc: ["'self'", 'data:', 'blob:'],
-          connectSrc: ["'self'", env.clientUrl, 'ws:', 'wss:'],
+          connectSrc: ["'self'", ...env.corsOrigins, 'ws:', 'wss:'],
           workerSrc: ["'self'"],
           manifestSrc: ["'self'"],
           objectSrc: ["'none'"],
@@ -52,7 +52,7 @@ export function createApp() {
   );
   app.use(
     cors({
-      origin: env.clientUrl,
+      origin: env.corsOrigins,
       credentials: true,
     }),
   );

@@ -30,7 +30,7 @@ import { ROLES } from '../config/constants.js';
 const cookieOptions = {
   httpOnly: true,
   secure: env.cookieSecure,
-  sameSite: 'lax' as const,
+  sameSite: env.cookieSameSite,
   path: '/api/auth',
 };
 
@@ -90,7 +90,7 @@ export async function logoutHandler(req: Request, res: Response, next: NextFunct
         ipAddress: req.ip,
       });
     }
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.clearCookie('refreshToken', cookieOptions);
     res.json({ success: true });
   } catch (error) {
     next(error);

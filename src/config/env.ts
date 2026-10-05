@@ -16,6 +16,13 @@ function required(name: string, fallback?: string): string {
   return value;
 }
 
+const clientUrls = (process.env.CLIENT_URL ?? 'http://localhost:5173')
+  .split(',')
+  .map((url) => url.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const cookieSameSite = (process.env.COOKIE_SAMESITE ?? 'lax').toLowerCase() as 'lax' | 'strict' | 'none';
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 5050),
@@ -29,7 +36,9 @@ export const env = {
   smtpUser: process.env.SMTP_USER ?? '',
   smtpPassword: process.env.SMTP_PASSWORD ?? '',
   smtpFrom: process.env.SMTP_FROM ?? 'Quadrant Care <noreply@quadrantcare.local>',
-  clientUrl: process.env.CLIENT_URL ?? 'http://localhost:5173',
+  clientUrl: clientUrls[0],
+  corsOrigins: [...new Set(clientUrls.map((url) => new URL(url).origin))],
+  cookieSameSite,
   storageProvider: (process.env.STORAGE_PROVIDER ?? 'local') as 'local' | 's3' | 'cloudinary',
   awsAccessKey: process.env.AWS_ACCESS_KEY ?? '',
   awsSecretKey: process.env.AWS_SECRET_KEY ?? '',
@@ -37,7 +46,7 @@ export const env = {
   awsRegion: process.env.AWS_REGION ?? '',
   uploadDir: process.env.UPLOAD_DIR ?? path.resolve(__dirname, '../../uploads'),
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 5),
-  cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
+  cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production' || cookieSameSite === 'none',
   isProd: (process.env.NODE_ENV ?? 'development') === 'production',
 };
 
