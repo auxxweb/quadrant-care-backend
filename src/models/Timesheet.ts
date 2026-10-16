@@ -31,6 +31,11 @@ const timesheetSchema = new Schema(
     breakDuration: { type: Number, required: true, min: 0 },
     totalMinutes: { type: Number, required: true, min: 0 },
     totalHoursDisplay: { type: String, required: true },
+    /** Productive minutes (auto-capped monitoring metric; does not replace worked hours). */
+    productiveMinutes: { type: Number, default: 0, min: 0 },
+    productiveHoursDisplay: { type: String, default: '0:00' },
+    productiveSource: { type: String, enum: ['RULE', 'MANUAL'], default: 'RULE' },
+    productiveNote: { type: String, trim: true },
     inchargeName: { type: String, trim: true },
     careHomeSignaturePath: { type: String },
     remarks: { type: String, trim: true },

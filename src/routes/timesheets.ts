@@ -8,6 +8,7 @@ import {
   adminVerify,
   createTimesheet,
   downloadPdf,
+  exportTimesheets,
   getTimesheet,
   listTimesheets,
   managerEditTimesheet,
@@ -22,6 +23,7 @@ import {
 export const timesheetRouter = Router();
 timesheetRouter.use(authenticate);
 timesheetRouter.get('/', listTimesheets);
+timesheetRouter.get('/export', exportTimesheets);
 timesheetRouter.get('/summary/weekly', weeklySummary);
 timesheetRouter.get('/summary/monthly', monthlySummary);
 timesheetRouter.post('/', authorize('STAFF', 'ADMIN'), validate(timesheetSchema), createTimesheet);

@@ -17,6 +17,8 @@ import { notifyAdmins, notifySuperAdmins, notifyUser } from '../services/notific
 import { sendEmail } from '../services/emailService.js';
 import { storageService } from '../services/storageService.js';
 import { generateTimesheetPdf } from '../services/pdfService.js';
+import { recalculateProductiveHoursForUserWeek } from '../services/productiveHoursService.js';
+import { sendTimesheetExport } from './reportsController.js';
 import type { TimesheetStatus } from '../config/constants.js';
 
 function escapeRegex(value: string) {
@@ -108,19 +110,24 @@ function buildFilter(req: Request) {
   return filter;
 }
 
+async function scopedListFilter(req: Request) {
+  const filter = buildFilter(req);
+  if (req.user?.role === 'STAFF') {
+    const employee = await staffEmployee(req.user.id);
+    filter.employeeId = employee._id;
+  }
+  if (req.user?.role === 'ADMIN' && String(req.query.ownerRole ?? '') === 'ADMIN') {
+    filter.userId = req.user.id;
+    filter.ownerRole = 'ADMIN';
+  }
+  return filter;
+}
+
 export async function listTimesheets(req: Request, res: Response, next: NextFunction) {
   try {
     const page = Number(req.query.page ?? 1);
     const limit = Number(req.query.limit ?? 20);
-    const filter = buildFilter(req);
-    if (req.user?.role === 'STAFF') {
-      const employee = await staffEmployee(req.user.id);
-      filter.employeeId = employee._id;
-    }
-    if (req.user?.role === 'ADMIN' && String(req.query.ownerRole ?? '') === 'ADMIN') {
-      filter.userId = req.user.id;
-      filter.ownerRole = 'ADMIN';
-    }
+    const filter = await scopedListFilter(req);
     const [items, total] = await Promise.all([
       Timesheet.find(filter)
         .populate('adminReviewedBy', 'name adminId')
@@ -131,6 +138,16 @@ export async function listTimesheets(req: Request, res: Response, next: NextFunc
       Timesheet.countDocuments(filter),
     ]);
     res.json({ items, total, page, pages: Math.ceil(total / limit) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function exportTimesheets(req: Request, res: Response, next: NextFunction) {
+  try {
+    const filter = await scopedListFilter(req);
+    const items = await Timesheet.find(filter).sort({ date: -1, createdAt: -1 }).limit(2000);
+    await sendTimesheetExport(req, res, items);
   } catch (error) {
     next(error);
   }
@@ -217,7 +234,9 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
     if (req.body.submit) {
       await submitExisting(timesheet, req);
     }
-    res.status(201).json(timesheet);
+    await recalculateProductiveHoursForUserWeek(userId, date);
+    const refreshed = await Timesheet.findById(timesheet._id);
+    res.status(201).json(refreshed ?? timesheet);
   } catch (error) {
     next(error);
   }
@@ -263,8 +282,9 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
       timesheet.careHomeSignaturePath = await storageService.saveBase64Image(req.body.careHomeSignature, 'signatures');
     }
     await timesheet.save();
+    await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
     await auditFromRequest(req.user, 'UPDATE_TIMESHEET', 'Timesheet', String(timesheet._id), `Updated ${timesheet.timesheetId}`, req);
-    res.json(timesheet);
+    res.json(await Timesheet.findById(timesheet._id));
   } catch (error) {
     next(error);
   }
@@ -302,8 +322,9 @@ export async function managerEditTimesheet(req: Request, res: Response, next: Ne
       at: new Date(),
     });
     await timesheet.save();
+    await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
     await auditFromRequest(req.user, 'UPDATE_TIMESHEET', 'Timesheet', String(timesheet._id), `Adjusted hours on ${timesheet.timesheetId}`, req);
-    res.json(timesheet);
+    res.json(await Timesheet.findById(timesheet._id));
   } catch (error) {
     next(error);
   }
@@ -438,6 +459,7 @@ export async function adminReject(req: Request, res: Response, next: NextFunctio
     timesheet.adminReviewedAt = new Date();
     timesheet.history.push({ status: TIMESHEET_STATUS.ADMIN_REJECTED, actorId: req.user!.id, actorName: req.user!.name, note: req.body.reason, at: new Date() });
     await timesheet.save();
+    await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
     await auditFromRequest(req.user, 'ADMIN_REJECT', 'Timesheet', String(timesheet._id), `Rejected ${timesheet.timesheetId}`, req);
     await notifyUser(String(timesheet.userId), 'Timesheet rejected', `Your timesheet needs correction: ${req.body.reason}`, 'REJECTED', String(timesheet._id));
     if (timesheet.employeeSnapshot?.email) {
@@ -497,6 +519,7 @@ export async function superAdminReject(req: Request, res: Response, next: NextFu
       at: new Date(),
     });
     await timesheet.save();
+    await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
     await auditFromRequest(req.user, 'SUPER_ADMIN_REJECT', 'Timesheet', String(timesheet._id), `Rejected ${timesheet.timesheetId}`, req);
     await notifyUser(String(timesheet.userId), 'Correction required', `Your timesheet needs correction: ${req.body.reason}`, 'REJECTED', String(timesheet._id));
     res.json(timesheet);
@@ -508,9 +531,13 @@ export async function superAdminReject(req: Request, res: Response, next: NextFu
 export async function downloadPdf(req: Request, res: Response, next: NextFunction) {
   try {
     const timesheet = await loadTimesheetForUser(req);
-    const pdf = await generateTimesheetPdf(timesheet);
+    const pdf = await generateTimesheetPdf(timesheet, {
+      productiveOnly: req.user?.metricsFocus === 'PRODUCTIVE',
+    });
+    const safeName = String(timesheet.timesheetId || 'timesheet').replace(/[^\w.-]+/g, '_');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${timesheet.employeeSnapshot?.name || timesheet.timesheetId}-timesheet.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
+    res.setHeader('Content-Length', String(pdf.length));
     res.send(pdf);
   } catch (error) {
     next(error);

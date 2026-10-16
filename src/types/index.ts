@@ -8,6 +8,7 @@ export interface AuthUser {
   email?: string;
   employeeId?: string;
   adminId?: string;
+  metricsFocus?: 'WORKED' | 'PRODUCTIVE';
 }
 
 declare global {

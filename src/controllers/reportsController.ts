@@ -4,12 +4,14 @@ import { Employee } from '../models/Employee.js';
 import { CareHome } from '../models/CareHome.js';
 import { JobRole } from '../models/JobRole.js';
 import { parseDateOnly } from '../utils/week.js';
+import { AppError } from '../utils/errors.js';
+import { buildTimesheetCsv, buildTimesheetPdfExport } from '../services/timesheetExportService.js';
 
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function dateFilter(req: Request) {
+export function reportDateFilter(req: Request) {
   const filter: Record<string, unknown> = {};
   if (req.query.from || req.query.to) {
     filter.date = {
@@ -17,7 +19,10 @@ function dateFilter(req: Request) {
       ...(req.query.to ? { $lte: parseDateOnly(String(req.query.to)) } : {}),
     };
   }
-  if (req.query.status) filter.status = req.query.status;
+  if (req.query.status) {
+    const statuses = String(req.query.status).split(',').map((value) => value.trim()).filter(Boolean);
+    filter.status = statuses.length > 1 ? { $in: statuses } : statuses[0];
+  }
   if (req.query.employeeId) filter.employeeId = req.query.employeeId;
   if (req.query.userId) filter.userId = req.query.userId;
   if (req.query.careHomeId) filter.careHomeId = req.query.careHomeId;
@@ -39,34 +44,42 @@ function dateFilter(req: Request) {
   return filter;
 }
 
+export async function sendTimesheetExport(
+  req: Request,
+  res: Response,
+  items: InstanceType<typeof Timesheet>[],
+) {
+  const format = String(req.query.format ?? '').toLowerCase();
+  const productiveOnly = req.user?.metricsFocus === 'PRODUCTIVE';
+  if (format === 'csv') {
+    const body = buildTimesheetCsv(items, productiveOnly);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.csv"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(body);
+    return;
+  }
+  if (format === 'pdf') {
+    if (!items.length) throw new AppError('No timesheets match the current filters.');
+    const pdf = await buildTimesheetPdfExport(items, { productiveOnly });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.pdf"');
+    res.setHeader('Content-Length', String(pdf.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+    return;
+  }
+  res.json({
+    items,
+    totalMinutes: items.reduce((sum, item) => sum + item.totalMinutes, 0),
+    totalProductiveMinutes: items.reduce((sum, item) => sum + (item.productiveMinutes ?? 0), 0),
+  });
+}
+
 export async function timesheetReport(req: Request, res: Response, next: NextFunction) {
   try {
-    const items = await Timesheet.find(dateFilter(req)).sort({ date: -1 }).limit(2000);
-    if (req.query.format === 'csv') {
-      const header = 'Timesheet ID,Employee,Employee ID,Care Home,Job Role,Date,Start,End,Break,Hours,Status\n';
-      const rows = items
-        .map((item) =>
-          [
-            item.timesheetId,
-            item.employeeSnapshot?.name ?? '',
-            item.employeeSnapshot?.employeeId ?? '',
-            item.careHomeSnapshot?.name ?? '',
-            item.jobRoleSnapshot?.name ?? '',
-            new Date(item.date).toISOString().slice(0, 10),
-            item.startTime,
-            item.endTime,
-            item.breakDuration,
-            item.totalHoursDisplay,
-            item.status,
-          ].join(','),
-        )
-        .join('\n');
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.csv"');
-      res.send(header + rows);
-      return;
-    }
-    res.json({ items, totalMinutes: items.reduce((sum, item) => sum + item.totalMinutes, 0) });
+    const items = await Timesheet.find(reportDateFilter(req)).sort({ date: -1 }).limit(2000);
+    await sendTimesheetExport(req, res, items);
   } catch (error) {
     next(error);
   }
@@ -75,7 +88,7 @@ export async function timesheetReport(req: Request, res: Response, next: NextFun
 export async function hoursReport(req: Request, res: Response, next: NextFunction) {
   try {
     const items = await Timesheet.aggregate([
-      { $match: dateFilter(req) },
+      { $match: reportDateFilter(req) },
       {
         $group: {
           _id: '$employeeSnapshot.employeeId',
@@ -95,7 +108,7 @@ export async function hoursReport(req: Request, res: Response, next: NextFunctio
 export async function careHomeReport(req: Request, res: Response, next: NextFunction) {
   try {
     const items = await Timesheet.aggregate([
-      { $match: dateFilter(req) },
+      { $match: reportDateFilter(req) },
       {
         $group: {
           _id: '$careHomeSnapshot.name',
@@ -114,7 +127,7 @@ export async function careHomeReport(req: Request, res: Response, next: NextFunc
 export async function employeeReport(req: Request, res: Response, next: NextFunction) {
   try {
     const items = await Timesheet.aggregate([
-      { $match: dateFilter(req) },
+      { $match: reportDateFilter(req) },
       {
         $group: {
           _id: { employeeId: '$employeeSnapshot.employeeId', status: '$status' },

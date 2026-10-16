@@ -35,6 +35,7 @@ export async function staffDashboard(req: Request, res: Response, next: NextFunc
       Timesheet.find({ employeeId: employee._id, date: { $gte: monthStart, $lte: monthEnd } }),
     ]);
     const weekMinutes = weekSheets.reduce((sum, item) => sum + item.totalMinutes, 0);
+    const weekProductiveMinutes = weekSheets.reduce((sum, item) => sum + (item.productiveMinutes ?? 0), 0);
     const weekly = Array.from({ length: 7 }).map((_, index) => {
       const date = addDays(weekStart, index);
       const key = toDateKey(date);
@@ -58,9 +59,11 @@ export async function staffDashboard(req: Request, res: Response, next: NextFunc
     res.json({
       employee,
       weekMinutes,
+      weekProductiveMinutes,
       pending,
       approved,
       monthMinutes: monthSheets.reduce((sum, item) => sum + item.totalMinutes, 0),
+      monthProductiveMinutes: monthSheets.reduce((sum, item) => sum + (item.productiveMinutes ?? 0), 0),
       today: weekSheets.find((item) => toDateKey(new Date(item.date)) === toDateKey(new Date())) ?? null,
       weekly,
       statusMix: {
@@ -141,12 +144,24 @@ export async function superAdminDashboard(_req: Request, res: Response, next: Ne
       Timesheet.find({ date: { $gte: monthStart, $lte: monthEnd } }),
       Timesheet.aggregate([
         { $match: { date: { $gte: monthStart, $lte: monthEnd } } },
-        { $group: { _id: '$careHomeSnapshot.name', minutes: { $sum: '$totalMinutes' } } },
+        {
+          $group: {
+            _id: '$careHomeSnapshot.name',
+            minutes: { $sum: '$totalMinutes' },
+            productiveMinutes: { $sum: { $ifNull: ['$productiveMinutes', 0] } },
+          },
+        },
         { $sort: { minutes: -1 } },
       ]),
       Timesheet.aggregate([
         { $match: { date: { $gte: monthStart, $lte: monthEnd } } },
-        { $group: { _id: '$employeeSnapshot.name', minutes: { $sum: '$totalMinutes' } } },
+        {
+          $group: {
+            _id: '$employeeSnapshot.name',
+            minutes: { $sum: '$totalMinutes' },
+            productiveMinutes: { $sum: { $ifNull: ['$productiveMinutes', 0] } },
+          },
+        },
         { $sort: { minutes: -1 } },
         { $limit: 5 },
       ]),
@@ -162,6 +177,14 @@ export async function superAdminDashboard(_req: Request, res: Response, next: Ne
       rejected: monthSheets.filter((item) => [TIMESHEET_STATUS.ADMIN_REJECTED, TIMESHEET_STATUS.SUPER_ADMIN_REJECTED].includes(item.status as never)).length,
       pending: monthSheets.filter((item) => ![TIMESHEET_STATUS.APPROVED, TIMESHEET_STATUS.ADMIN_REJECTED, TIMESHEET_STATUS.SUPER_ADMIN_REJECTED].includes(item.status as never)).length,
     };
+    const topProductiveEmployees = [...(topEmployees as { _id: string; minutes: number; productiveMinutes?: number }[])]
+      .sort((a, b) => (b.productiveMinutes ?? 0) - (a.productiveMinutes ?? 0))
+      .slice(0, 5)
+      .map((item) => ({
+        _id: item._id,
+        minutes: item.productiveMinutes ?? 0,
+        workedMinutes: item.minutes,
+      }));
     res.json({
       employees,
       admins,
@@ -172,8 +195,10 @@ export async function superAdminDashboard(_req: Request, res: Response, next: Ne
       pendingApprovals,
       approvedMonth,
       monthMinutes: monthSheets.reduce((sum, item) => sum + item.totalMinutes, 0),
+      monthProductiveMinutes: monthSheets.reduce((sum, item) => sum + (item.productiveMinutes ?? 0), 0),
       careHomeHours,
       topEmployees,
+      topProductiveEmployees,
       weekly,
       approvedVsRejected,
       submittedOverTime: weekly,

@@ -20,6 +20,13 @@ const userSchema = new Schema(
     passwordResetExpires: { type: Date, select: false },
     mustChangePassword: { type: Boolean, default: false },
     themePreference: { type: String, enum: ['light', 'dark', 'system'], default: 'light' },
+    /**
+     * SUPER_ADMIN view focus:
+     * - WORKED: operational panel (actual logged hours)
+     * - PRODUCTIVE: monitoring panel (auto-capped productive hours)
+     * Same underlying timesheet records; UI emphasis differs only.
+     */
+    metricsFocus: { type: String, enum: ['WORKED', 'PRODUCTIVE'], default: 'WORKED', index: true },
     signaturePath: { type: String },
   },
   { timestamps: true },

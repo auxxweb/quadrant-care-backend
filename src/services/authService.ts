@@ -201,6 +201,7 @@ export function toAuthUser(user: InstanceType<typeof User>): AuthUser {
     email: user.email ?? undefined,
     employeeId: user.employeeId ?? undefined,
     adminId: user.adminId ?? undefined,
+    metricsFocus: ((user as { metricsFocus?: 'WORKED' | 'PRODUCTIVE' }).metricsFocus ?? 'WORKED'),
   };
 }
 
@@ -216,6 +217,7 @@ export function sanitizeUser(user: InstanceType<typeof User>) {
     adminId: user.adminId,
     lastLogin: user.lastLogin,
     themePreference: user.themePreference,
+    metricsFocus: (user as { metricsFocus?: 'WORKED' | 'PRODUCTIVE' }).metricsFocus ?? 'WORKED',
     mustChangePassword: user.mustChangePassword,
     hasPasscode: Boolean((user as { passcodeHash?: string }).passcodeHash),
     signaturePath: user.signaturePath,
