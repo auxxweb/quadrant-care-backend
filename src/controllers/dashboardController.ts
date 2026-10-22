@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { Employee } from '../models/Employee.js';
+import { Employee, EMPLOYEE_POPULATE } from '../models/Employee.js';
 import { User } from '../models/User.js';
 import { CareHome } from '../models/CareHome.js';
 import { JobRole } from '../models/JobRole.js';
@@ -19,7 +19,7 @@ function todayRange() {
 export async function staffDashboard(req: Request, res: Response, next: NextFunction) {
   try {
     if (req.user?.role !== 'STAFF') throw new ForbiddenError();
-    const employee = await Employee.findOne({ userId: req.user.id }).populate('jobRoleId').populate('careHomeId');
+    const employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
     if (!employee) throw new ForbiddenError('Employee profile not found.');
     const weekStart = startOfWeek(new Date());
     const weekEnd = endOfWeek(new Date());

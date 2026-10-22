@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env.js';
 import { User } from '../models/User.js';
-import { Employee } from '../models/Employee.js';
+import { Employee, EMPLOYEE_POPULATE } from '../models/Employee.js';
 import { CareHome } from '../models/CareHome.js';
 import { JobRole } from '../models/JobRole.js';
 import { SystemSettings } from '../models/SystemSettings.js';
@@ -106,7 +106,7 @@ export async function me(req: Request, res: Response, next: NextFunction) {
     }
     let employee = null;
     if (user.role === 'STAFF') {
-      employee = await Employee.findOne({ userId: user._id }).populate('jobRoleId').populate('careHomeId');
+      employee = await Employee.findOne({ userId: user._id }).populate([...EMPLOYEE_POPULATE]);
     }
     const settings = await getSettings();
     res.json({
@@ -212,7 +212,8 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
         fullName: fullName.trim(),
         email: emailNorm,
         mobile: mobileNorm,
-        jobRoleId,
+        jobRoleIds: [jobRoleId],
+        primaryJobRoleId: jobRoleId,
         careHomeId,
         joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
         status: 'ACTIVE',

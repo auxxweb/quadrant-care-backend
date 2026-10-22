@@ -1,10 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { Timesheet } from '../models/Timesheet.js';
-import { Employee } from '../models/Employee.js';
+import { Employee, EMPLOYEE_POPULATE } from '../models/Employee.js';
 import { CareHome } from '../models/CareHome.js';
-import { JobRole } from '../models/JobRole.js';
 import { User } from '../models/User.js';
+import { resolveStaffTimesheetJobRole } from '../services/employeeJobRoles.js';
 import { AppError, ForbiddenError, NotFoundError } from '../utils/errors.js';
 import { calculateShiftDuration } from '../utils/time.js';
 import { parseDateOnly } from '../utils/week.js';
@@ -175,12 +175,9 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
     let inchargeName = req.body.inchargeName as string | undefined;
 
     if (req.user.role === 'STAFF') {
-      jobRole = req.body.jobRoleId ? await JobRole.findById(req.body.jobRoleId) : null;
-      const employee = await Employee.findOne({ userId: req.user.id }).populate('jobRoleId').populate('careHomeId');
+      const employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
       if (!employee) throw new ForbiddenError('Employee profile not found.');
-      if (!jobRole && employee.jobRoleId && typeof employee.jobRoleId === 'object' && '_id' in employee.jobRoleId) {
-        jobRole = employee.jobRoleId as { _id: unknown; name?: string };
-      }
+      jobRole = resolveStaffTimesheetJobRole(employee, req.body.jobRoleId);
       employeeId = employee._id;
       userId = String(employee.userId);
       employeeSnapshot = {

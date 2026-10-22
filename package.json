@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/scripts/seed.ts",
     "backfill:productive": "tsx src/scripts/backfill-productive-hours.ts",
+    "backfill:job-roles": "tsx src/scripts/backfill-employee-job-roles.ts",
     "create:productive-admin": "tsx src/scripts/create-productive-super-admin.ts",
     "test": "vitest run",
     "test:watch": "vitest",

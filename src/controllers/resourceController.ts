@@ -1,10 +1,11 @@
 import type { Request, Response, NextFunction } from 'express';
 import { CareHome } from '../models/CareHome.js';
 import { JobRole } from '../models/JobRole.js';
-import { Employee } from '../models/Employee.js';
+import { Employee, EMPLOYEE_POPULATE } from '../models/Employee.js';
 import { User } from '../models/User.js';
 import { AppError, ConflictError, NotFoundError } from '../utils/errors.js';
 import { assertPasswordStrength, hashSecret } from '../services/authService.js';
+import { assertAssignableJobRoles, normalizeEmployeeJobRoles } from '../services/employeeJobRoles.js';
 import { nextAdminId, nextEmployeeId } from '../services/idService.js';
 import { auditFromRequest } from '../services/auditService.js';
 import { sendEmail } from '../services/emailService.js';
@@ -24,7 +25,7 @@ export async function listEmployees(req: Request, res: Response, next: NextFunct
     const filter: Record<string, unknown> = {};
     if (req.query.status) filter.status = req.query.status;
     if (req.query.careHomeId) filter.careHomeId = req.query.careHomeId;
-    if (req.query.jobRoleId) filter.jobRoleId = req.query.jobRoleId;
+    if (req.query.jobRoleId) filter.jobRoleIds = req.query.jobRoleId;
     if (req.query.search) {
       const rx = new RegExp(escapeRegex(String(req.query.search)), 'i');
       filter.$or = [{ fullName: rx }, { employeeId: rx }, { email: rx }, { mobile: rx }];
@@ -32,8 +33,7 @@ export async function listEmployees(req: Request, res: Response, next: NextFunct
     applyDateRange(filter, req, 'joiningDate');
     const [items, total] = await Promise.all([
       Employee.find(filter)
-        .populate('jobRoleId')
-        .populate('careHomeId')
+        .populate([...EMPLOYEE_POPULATE])
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit),
@@ -47,11 +47,11 @@ export async function listEmployees(req: Request, res: Response, next: NextFunct
 
 export async function createEmployee(req: Request, res: Response, next: NextFunction) {
   try {
-    const { fullName, email, mobile, password, jobRoleId, careHomeId, joiningDate, dateOfBirth, address, loginEnabled, passcode, profilePhoto } =
+    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, careHomeId, joiningDate, dateOfBirth, address, loginEnabled, passcode, profilePhoto } =
       req.body;
     assertPasswordStrength(password);
-    const jobRole = await JobRole.findById(jobRoleId);
-    if (!jobRole || jobRole.status !== 'ACTIVE') throw new AppError('Select an active job role.');
+    const roles = normalizeEmployeeJobRoles(jobRoleIds, primaryJobRoleId);
+    await assertAssignableJobRoles(roles.jobRoleIds);
     if (careHomeId) {
       const careHome = await CareHome.findById(careHomeId);
       if (!careHome || careHome.status !== 'ACTIVE') throw new AppError('Select an active care home.');
@@ -86,7 +86,8 @@ export async function createEmployee(req: Request, res: Response, next: NextFunc
       dateOfBirth,
       address,
       profilePhoto: photoPath,
-      jobRoleId,
+      jobRoleIds: roles.jobRoleIds,
+      primaryJobRoleId: roles.primaryJobRoleId,
       ...(careHomeId ? { careHomeId } : {}),
       joiningDate,
       status: 'ACTIVE',
@@ -99,7 +100,7 @@ export async function createEmployee(req: Request, res: Response, next: NextFunc
       template: 'welcome',
       data: { name: fullName, loginUrl: `${env.clientUrl}/login` },
     });
-    res.status(201).json(await employee.populate(['jobRoleId', 'careHomeId']));
+    res.status(201).json(await employee.populate([...EMPLOYEE_POPULATE]));
   } catch (error) {
     next(error);
   }
@@ -107,7 +108,7 @@ export async function createEmployee(req: Request, res: Response, next: NextFunc
 
 export async function getEmployee(req: Request, res: Response, next: NextFunction) {
   try {
-    const employee = await Employee.findById(req.params.id).populate('jobRoleId').populate('careHomeId');
+    const employee = await Employee.findById(req.params.id).populate([...EMPLOYEE_POPULATE]);
     if (!employee) throw new NotFoundError('Employee not found.');
     if (req.user?.role === 'STAFF') {
       const mine = await Employee.findOne({ userId: req.user.id });
@@ -141,7 +142,13 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
     }
     if (body.address !== undefined) employee.address = body.address;
     if (body.dateOfBirth !== undefined) employee.dateOfBirth = body.dateOfBirth;
-    if (body.jobRoleId) employee.jobRoleId = body.jobRoleId;
+    if (body.jobRoleIds || body.primaryJobRoleId) {
+      const currentIds = (employee.jobRoleIds ?? []).map((id) => String(id));
+      const roles = normalizeEmployeeJobRoles(body.jobRoleIds ?? currentIds, body.primaryJobRoleId, employee.primaryJobRoleId ? String(employee.primaryJobRoleId) : undefined);
+      await assertAssignableJobRoles(roles.jobRoleIds, { allowExistingInactiveIds: currentIds });
+      employee.set('jobRoleIds', roles.jobRoleIds);
+      employee.set('primaryJobRoleId', roles.primaryJobRoleId);
+    }
     if (body.careHomeId) {
       const careHome = await CareHome.findById(body.careHomeId);
       if (!careHome) throw new AppError('Care home not found.');
@@ -167,7 +174,7 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
     await user.save();
     await employee.save();
     await auditFromRequest(req.user, 'UPDATE_EMPLOYEE', 'Employee', String(employee._id), `Updated employee ${employee.employeeId}`, req);
-    res.json(await employee.populate(['jobRoleId', 'careHomeId']));
+    res.json(await employee.populate([...EMPLOYEE_POPULATE]));
   } catch (error) {
     next(error);
   }
@@ -453,7 +460,7 @@ export async function updateJobRole(req: Request, res: Response, next: NextFunct
 
 export async function deleteJobRole(req: Request, res: Response, next: NextFunction) {
   try {
-    const assigned = await Employee.countDocuments({ jobRoleId: req.params.id });
+    const assigned = await Employee.countDocuments({ jobRoleIds: req.params.id });
     if (assigned > 0) {
       throw new AppError(
         `This job role has ${assigned} employee${assigned === 1 ? '' : 's'} assigned. Reassign them before deleting.`,
