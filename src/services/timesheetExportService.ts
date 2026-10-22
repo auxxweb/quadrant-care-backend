@@ -1,3 +1,4 @@
+import { timesheetStatusLabel } from '../config/constants.js';
 import type { TimesheetDocument } from '../models/Timesheet.js';
 import { generateGroupedTimesheetPdf } from './pdfService.js';
 
@@ -32,7 +33,7 @@ export function buildTimesheetCsv(items: TimesheetDocument[], productiveOnly: bo
           item.jobRoleSnapshot?.name ?? '',
           new Date(item.date).toISOString().slice(0, 10),
           item.productiveHoursDisplay ?? '0:00',
-          item.status,
+          timesheetStatusLabel(item.status),
         ]
       : [
           item.timesheetId,
@@ -45,7 +46,7 @@ export function buildTimesheetCsv(items: TimesheetDocument[], productiveOnly: bo
           item.endTime,
           item.breakDuration,
           item.totalHoursDisplay,
-          item.status,
+          timesheetStatusLabel(item.status),
         ]
     )
       .map(escapeCsv)

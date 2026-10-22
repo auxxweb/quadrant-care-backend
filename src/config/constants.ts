@@ -25,6 +25,23 @@ export const TIMESHEET_STATUS = {
 
 export type TimesheetStatus = (typeof TIMESHEET_STATUS)[keyof typeof TIMESHEET_STATUS];
 
+export const TIMESHEET_STATUS_LABELS: Record<TimesheetStatus, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  ADMIN_REVIEW: 'Pending review',
+  ADMIN_VERIFIED: 'Admin verified',
+  ADMIN_REJECTED: 'Rejected',
+  SUPER_ADMIN_REVIEW: 'Awaiting approval',
+  APPROVED: 'Approved',
+  SUPER_ADMIN_REJECTED: 'Rejected',
+  RESUBMITTED: 'Resubmitted',
+};
+
+export function timesheetStatusLabel(status?: string) {
+  if (!status) return '';
+  return TIMESHEET_STATUS_LABELS[status as TimesheetStatus] ?? status.replaceAll('_', ' ');
+}
+
 export const AUDIT_ACTIONS = {
   LOGIN: 'LOGIN',
   LOGOUT: 'LOGOUT',
