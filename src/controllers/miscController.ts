@@ -5,6 +5,7 @@ import { getSettings } from '../services/authService.js';
 import { SystemSettings } from '../models/SystemSettings.js';
 import { auditFromRequest } from '../services/auditService.js';
 import { applyDateRange } from '../utils/query.js';
+import { AppError } from '../utils/errors.js';
 
 export async function getSettingsHandler(_req: Request, res: Response, next: NextFunction) {
   try {
@@ -16,6 +17,13 @@ export async function getSettingsHandler(_req: Request, res: Response, next: Nex
 
 export async function updateSettings(req: Request, res: Response, next: NextFunction) {
   try {
+    const current = await getSettings();
+    const emailLoginEnabled = req.body.emailLoginEnabled ?? current.emailLoginEnabled;
+    const mobileLoginEnabled = req.body.mobileLoginEnabled ?? current.mobileLoginEnabled;
+    const passcodeLoginEnabled = req.body.passcodeLoginEnabled ?? current.passcodeLoginEnabled;
+    if (!emailLoginEnabled && !mobileLoginEnabled && !passcodeLoginEnabled) {
+      throw new AppError('Enable at least one login method.', 400, 'LOGIN_METHOD_REQUIRED');
+    }
     const settings = await SystemSettings.findOneAndUpdate({ key: 'global' }, { $set: req.body }, { new: true, upsert: true });
     await auditFromRequest(req.user, 'SETTINGS_UPDATED', 'SystemSettings', String(settings._id), 'Updated application settings', req);
     res.json(settings);
