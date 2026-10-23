@@ -18,7 +18,7 @@ import { sendEmail } from '../services/emailService.js';
 import { storageService } from '../services/storageService.js';
 import { generateTimesheetPdf } from '../services/pdfService.js';
 import { recalculateProductiveHoursForUserWeek } from '../services/productiveHoursService.js';
-import { sendTimesheetExport } from './reportsController.js';
+import { sendTimesheetExport } from '../services/timesheetExportService.js';
 import type { TimesheetStatus } from '../config/constants.js';
 
 function escapeRegex(value: string) {
@@ -128,7 +128,7 @@ export async function listTimesheets(req: Request, res: Response, next: NextFunc
     const page = Number(req.query.page ?? 1);
     const limit = Number(req.query.limit ?? 20);
     const filter = await scopedListFilter(req);
-    const [items, total] = await Promise.all([
+    const [items, total, totals] = await Promise.all([
       Timesheet.find(filter)
         .populate('adminReviewedBy', 'name adminId')
         .populate('superAdminApprovedBy', 'name')
@@ -136,8 +136,25 @@ export async function listTimesheets(req: Request, res: Response, next: NextFunc
         .skip((page - 1) * limit)
         .limit(limit),
       Timesheet.countDocuments(filter),
+      Timesheet.aggregate<{ totalMinutes: number; totalProductiveMinutes: number }>([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalMinutes: { $sum: '$totalMinutes' },
+            totalProductiveMinutes: { $sum: { $ifNull: ['$productiveMinutes', 0] } },
+          },
+        },
+      ]),
     ]);
-    res.json({ items, total, page, pages: Math.ceil(total / limit) });
+    res.json({
+      items,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      totalMinutes: totals[0]?.totalMinutes ?? 0,
+      totalProductiveMinutes: totals[0]?.totalProductiveMinutes ?? 0,
+    });
   } catch (error) {
     next(error);
   }

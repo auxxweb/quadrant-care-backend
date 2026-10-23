@@ -1,5 +1,7 @@
+import type { Request, Response } from 'express';
 import { timesheetStatusLabel } from '../config/constants.js';
 import type { TimesheetDocument } from '../models/Timesheet.js';
+import { AppError } from '../utils/errors.js';
 import { generateGroupedTimesheetPdf } from './pdfService.js';
 
 function escapeCsv(value: unknown) {
@@ -60,4 +62,36 @@ export async function buildTimesheetPdfExport(
   options: { productiveOnly?: boolean } = {},
 ) {
   return generateGroupedTimesheetPdf(groupTimesheetsForPdf(items), options);
+}
+
+export async function sendTimesheetExport(
+  req: Request,
+  res: Response,
+  items: TimesheetDocument[],
+) {
+  const format = String(req.query.format ?? '').toLowerCase();
+  const productiveOnly = req.user?.metricsFocus === 'PRODUCTIVE';
+  if (format === 'csv') {
+    const body = buildTimesheetCsv(items, productiveOnly);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.csv"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(body);
+    return;
+  }
+  if (format === 'pdf') {
+    if (!items.length) throw new AppError('No timesheets match the current filters.');
+    const pdf = await buildTimesheetPdfExport(items, { productiveOnly });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.pdf"');
+    res.setHeader('Content-Length', String(pdf.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+    return;
+  }
+  res.json({
+    items,
+    totalMinutes: items.reduce((sum, item) => sum + item.totalMinutes, 0),
+    totalProductiveMinutes: items.reduce((sum, item) => sum + (item.productiveMinutes ?? 0), 0),
+  });
 }
