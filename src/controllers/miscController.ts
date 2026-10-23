@@ -1,11 +1,19 @@
 import type { Request, Response, NextFunction } from 'express';
 import { AuditLog } from '../models/AuditLog.js';
 import { Notification } from '../models/Notification.js';
+import { Timesheet } from '../models/Timesheet.js';
+import { Employee } from '../models/Employee.js';
+import { CareHome } from '../models/CareHome.js';
+import { JobRole } from '../models/JobRole.js';
 import { getSettings } from '../services/authService.js';
 import { SystemSettings } from '../models/SystemSettings.js';
 import { auditFromRequest } from '../services/auditService.js';
 import { applyDateRange } from '../utils/query.js';
 import { AppError } from '../utils/errors.js';
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 export async function getSettingsHandler(_req: Request, res: Response, next: NextFunction) {
   try {
@@ -80,6 +88,30 @@ export async function markAllRead(req: Request, res: Response, next: NextFunctio
   try {
     await Notification.updateMany({ userId: req.user!.id, read: false }, { $set: { read: true, readAt: new Date() } });
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function globalSearch(req: Request, res: Response, next: NextFunction) {
+  try {
+    const q = String(req.query.q ?? '').trim();
+    if (q.length < 2) {
+      res.json({ employees: [], careHomes: [], jobRoles: [], timesheets: [] });
+      return;
+    }
+    const rx = new RegExp(escapeRegex(q), 'i');
+    const staffScope = req.user?.role === 'STAFF';
+    const [employees, careHomes, jobRoles, timesheets] = await Promise.all([
+      staffScope ? [] : Employee.find({ $or: [{ fullName: rx }, { employeeId: rx }, { email: rx }] }).limit(8),
+      CareHome.find({ name: rx }).limit(8),
+      JobRole.find({ name: rx }).limit(8),
+      Timesheet.find({
+        $or: [{ timesheetId: rx }, { 'employeeSnapshot.name': rx }, { 'employeeSnapshot.employeeId': rx }],
+        ...(staffScope ? { userId: req.user!.id } : {}),
+      }).limit(8),
+    ]);
+    res.json({ employees, careHomes, jobRoles, timesheets });
   } catch (error) {
     next(error);
   }

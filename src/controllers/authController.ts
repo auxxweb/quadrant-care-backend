@@ -23,6 +23,7 @@ import { recordAudit } from '../services/auditService.js';
 import { storageService } from '../services/storageService.js';
 import { sendEmail } from '../services/emailService.js';
 import { nextEmployeeId } from '../services/idService.js';
+import { assertAssignableJobRoles, normalizeEmployeeJobRoles } from '../services/employeeJobRoles.js';
 import { notifyRole } from '../services/notificationService.js';
 import { AppError, ConflictError } from '../utils/errors.js';
 import { ROLES } from '../config/constants.js';
@@ -167,20 +168,21 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
       throw new AppError('Staff self-signup is currently disabled. Please ask an admin to create your account.', 403, 'SIGNUP_DISABLED');
     }
 
-    const { fullName, email, mobile, password, jobRoleId, careHomeId, joiningDate, passcode } = req.body as {
+    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, careHomeId, joiningDate, passcode } = req.body as {
       fullName: string;
       email: string;
       mobile: string;
       password: string;
-      jobRoleId: string;
+      jobRoleIds: string[];
+      primaryJobRoleId?: string;
       careHomeId: string;
       joiningDate?: string;
       passcode?: string;
     };
 
     assertPasswordStrength(password);
-    const jobRole = await JobRole.findById(jobRoleId);
-    if (!jobRole || jobRole.status !== 'ACTIVE') throw new AppError('Select an active job role.');
+    const roles = normalizeEmployeeJobRoles(jobRoleIds, primaryJobRoleId);
+    await assertAssignableJobRoles(roles.jobRoleIds);
     const careHome = await CareHome.findById(careHomeId);
     if (!careHome || careHome.status !== 'ACTIVE') throw new AppError('Select an active care home.');
 
@@ -212,8 +214,8 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
         fullName: fullName.trim(),
         email: emailNorm,
         mobile: mobileNorm,
-        jobRoleIds: [jobRoleId],
-        primaryJobRoleId: jobRoleId,
+        jobRoleIds: roles.jobRoleIds,
+        primaryJobRoleId: roles.primaryJobRoleId,
         careHomeId,
         joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
         status: 'ACTIVE',
