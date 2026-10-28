@@ -63,7 +63,7 @@ export const timesheetSchema = z.object({
   jobRoleId: z.string().optional(),
   careHomeId: z.string().min(1, 'Select a care home.'),
   inchargeName: z.string().optional(),
-  careHomeSignature: z.string().min(20, 'Care home admin signature is required.').optional(),
+  careHomeSignature: z.string().min(20, 'Care Home In-Charge Signature is required.').optional(),
   remarks: z.string().optional(),
   submit: z.boolean().optional(),
 });
