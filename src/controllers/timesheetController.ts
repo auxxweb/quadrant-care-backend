@@ -219,6 +219,9 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
 
     const date = parseDateOnly(req.body.date);
     await assertDayUnder24Hours(userId, date, calc.totalMinutes);
+    if (req.user.role === 'STAFF' && req.body.submit && !req.body.careHomeSignature?.startsWith('data:image')) {
+      throw new AppError('Care Home In-Charge Signature is required.');
+    }
     let careHomeSignaturePath: string | undefined;
     if (req.user.role === 'STAFF' && req.body.careHomeSignature?.startsWith('data:image')) {
       careHomeSignaturePath = await storageService.saveBase64Image(req.body.careHomeSignature, 'signatures');
@@ -351,6 +354,9 @@ async function submitExisting(timesheet: InstanceType<typeof Timesheet>, req: Re
     assertTransition(from, TIMESHEET_STATUS.SUPER_ADMIN_REVIEW);
     timesheet.status = TIMESHEET_STATUS.SUPER_ADMIN_REVIEW;
   } else {
+    if (!timesheet.careHomeSignaturePath) {
+      throw new AppError('Care Home In-Charge Signature is required.');
+    }
     const nextStatus =
       from === TIMESHEET_STATUS.ADMIN_REJECTED || from === TIMESHEET_STATUS.SUPER_ADMIN_REJECTED
         ? TIMESHEET_STATUS.RESUBMITTED
