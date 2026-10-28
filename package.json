@@ -11,11 +11,14 @@
     "backfill:productive": "tsx src/scripts/backfill-productive-hours.ts",
     "backfill:job-roles": "tsx src/scripts/backfill-employee-job-roles.ts",
     "create:productive-admin": "tsx src/scripts/create-productive-super-admin.ts",
+    "migrate:uploads-s3": "tsx src/scripts/migrate-uploads-to-s3.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1158.0",
+    "@aws-sdk/s3-request-presigner": "^3.1158.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

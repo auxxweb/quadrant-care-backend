@@ -44,11 +44,18 @@ export const env = {
   awsSecretKey: process.env.AWS_SECRET_KEY ?? '',
   awsBucket: process.env.AWS_BUCKET ?? '',
   awsRegion: process.env.AWS_REGION ?? '',
+  awsS3Prefix: (process.env.AWS_S3_PREFIX ?? '').replace(/^\/+|\/+$/g, ''),
+  s3UrlExpirySeconds: Number(process.env.S3_URL_EXPIRY_SECONDS ?? 300),
   uploadDir: process.env.UPLOAD_DIR ?? path.resolve(__dirname, '../../uploads'),
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 5),
   cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production' || cookieSameSite === 'none',
   isProd: (process.env.NODE_ENV ?? 'development') === 'production',
 };
+
+if (env.storageProvider === 's3') {
+  required('AWS_BUCKET');
+  required('AWS_REGION');
+}
 
 export const APP_NAME = 'Quadrant Care';
 export const COMPANY_NAME = 'Quadrant Care Services Ltd';

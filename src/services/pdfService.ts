@@ -26,10 +26,34 @@ function sortItems(items: TimesheetDocument[]) {
   });
 }
 
+type SignatureImages = Map<string, Buffer>;
+
+function signatureKey(item: TimesheetDocument) {
+  return item.careHomeSignaturePath ?? item.adminSignaturePath ?? undefined;
+}
+
+/** PDF drawing is synchronous, so fetch every signature image up front. */
+async function loadSignatures(groups: TimesheetDocument[][]): Promise<SignatureImages> {
+  const keys = [...new Set(groups.flat().map(signatureKey).filter((key): key is string => Boolean(key)))];
+  const images: SignatureImages = new Map();
+  await Promise.all(
+    keys.map(async (key) => {
+      try {
+        const buffer = await storageService.read(key);
+        if (buffer) images.set(key, buffer);
+      } catch {
+        // A missing or unreadable signature falls back to text in the PDF.
+      }
+    }),
+  );
+  return images;
+}
+
 function drawTimesheetPage(
   doc: PDFKit.PDFDocument,
   inputItems: TimesheetDocument[],
   options: { productiveOnly?: boolean },
+  signatures: SignatureImages,
 ) {
   const productiveOnly = Boolean(options.productiveOnly);
   const items = sortItems(inputItems);
@@ -103,14 +127,10 @@ function drawTimesheetPage(
     x = left;
     doc.font('Helvetica').fontSize(8).fillColor('#0f172a');
     values.forEach((value, index) => {
-      if (index === inchargeIndex && signaturePath) {
+      const image = index === inchargeIndex && signaturePath ? signatures.get(signaturePath) : undefined;
+      if (image) {
         try {
-          const resolved = storageService.resolve(signaturePath);
-          if (fs.existsSync(resolved)) {
-            doc.image(resolved, x + 4, y + 2, { height: 16 });
-          } else {
-            doc.text(value, x + 2, y + 6, { width: widths[index] - 4 });
-          }
+          doc.image(image, x + 4, y + 2, { height: 16 });
         } catch {
           doc.text(value, x + 2, y + 6, { width: widths[index] - 4 });
         }
@@ -146,7 +166,7 @@ function drawTimesheetPage(
         item.inchargeName || '',
         item.remarks || '',
       ],
-      item.careHomeSignaturePath ?? item.adminSignaturePath ?? undefined,
+      signatureKey(item),
     );
   });
 
@@ -174,13 +194,10 @@ function drawTimesheetPage(
   y += 18;
   doc.text('SUPERVISOR SIGNATURE:', left, y);
   const signed = items.find((item) => item.careHomeSignaturePath || item.adminSignaturePath);
-  const signaturePath = signed?.careHomeSignaturePath ?? signed?.adminSignaturePath;
-  if (signaturePath) {
+  const signatureImage = signed ? signatures.get(signatureKey(signed)!) : undefined;
+  if (signatureImage) {
     try {
-      const resolved = storageService.resolve(signaturePath);
-      if (fs.existsSync(resolved)) {
-        doc.image(resolved, left + 130, y - 6, { height: 28 });
-      }
+      doc.image(signatureImage, left + 130, y - 6, { height: 28 });
     } catch {
       doc.font('Helvetica').text('____________________________', left + 130, y);
     }
@@ -207,6 +224,7 @@ export async function generateGroupedTimesheetPdf(
   options: { productiveOnly?: boolean } = {},
 ): Promise<Buffer> {
   const sheets = groups.map(sortItems).filter((group) => group.length > 0);
+  const signatures = await loadSignatures(sheets);
   const doc = new PDFDocument({ size: 'A4', margin: 28 });
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -224,7 +242,7 @@ export async function generateGroupedTimesheetPdf(
 
   sheets.forEach((group, index) => {
     if (index > 0) doc.addPage();
-    drawTimesheetPage(doc, group, options);
+    drawTimesheetPage(doc, group, options, signatures);
   });
 
   doc.end();

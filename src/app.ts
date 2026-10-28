@@ -9,8 +9,13 @@ import { env } from './config/env.js';
 import { apiLimiter } from './middlewares/rateLimit.js';
 import { apiRouter } from './routes/index.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
+import { storageService } from './services/storageService.js';
 
 const FRONTEND_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../frontend/dist');
+// /uploads redirects here when files live in S3, so the bucket must be allowed as an image source.
+const S3_IMG_ORIGINS = env.storageProvider === 's3'
+  ? [`https://${env.awsBucket}.s3.${env.awsRegion}.amazonaws.com`, `https://${env.awsBucket}.s3.amazonaws.com`]
+  : [];
 
 export function createApp() {
   const app = express();
@@ -37,7 +42,7 @@ export function createApp() {
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-          imgSrc: ["'self'", 'data:', 'blob:'],
+          imgSrc: ["'self'", 'data:', 'blob:', ...S3_IMG_ORIGINS],
           connectSrc: ["'self'", ...env.corsOrigins, 'ws:', 'wss:'],
           workerSrc: ["'self'"],
           manifestSrc: ["'self'"],
@@ -59,7 +64,20 @@ export function createApp() {
   app.use(cookieParser());
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
-  app.use('/uploads', express.static(path.resolve(env.uploadDir)));
+  if (env.storageProvider === 's3') {
+    app.get('/uploads/*', async (req, res, next) => {
+      try {
+        const url = await storageService.getSignedUrl(decodeURIComponent(req.path.slice('/uploads/'.length)));
+        // Let browsers reuse the redirect, but expire it well before the signed URL does.
+        res.setHeader('Cache-Control', `private, max-age=${Math.max(0, env.s3UrlExpirySeconds - 60)}`);
+        res.redirect(302, url);
+      } catch (error) {
+        next(error);
+      }
+    });
+  } else {
+    app.use('/uploads', express.static(path.resolve(env.uploadDir)));
+  }
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Quadrant Care' }));
   app.use('/api', apiLimiter, apiRouter);
 
