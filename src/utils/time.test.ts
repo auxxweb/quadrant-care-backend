@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateShiftDuration, formatMinutes } from './time.js';
+import { calculateShiftDuration, formatMinutes, intervalsOverlap, shiftInterval } from './time.js';
 import { assertTransition, canStaffEdit } from '../services/timesheetStatus.js';
 import { TIMESHEET_STATUS } from '../config/constants.js';
 
@@ -44,5 +44,33 @@ describe('timesheet status transitions', () => {
     assertTransition(TIMESHEET_STATUS.SUPER_ADMIN_REJECTED, TIMESHEET_STATUS.RESUBMITTED);
     expect(canStaffEdit(TIMESHEET_STATUS.ADMIN_REJECTED)).toBe(true);
     expect(canStaffEdit(TIMESHEET_STATUS.APPROVED)).toBe(false);
+  });
+});
+
+describe('shift overlap', () => {
+  const day = new Date('2026-10-29T00:00:00.000Z');
+  const nextDay = new Date('2026-10-30T00:00:00.000Z');
+  const overlaps = (a: [Date, string, string], b: [Date, string, string]) =>
+    intervalsOverlap(shiftInterval(...a), shiftInterval(...b));
+
+  it('flags an exact duplicate', () => {
+    expect(overlaps([day, '08:00', '20:00'], [day, '08:00', '20:00'])).toBe(true);
+  });
+
+  it('flags a partial overlap', () => {
+    expect(overlaps([day, '08:00', '16:00'], [day, '12:00', '20:00'])).toBe(true);
+  });
+
+  it('allows shifts that only touch', () => {
+    expect(overlaps([day, '08:00', '12:00'], [day, '12:00', '16:00'])).toBe(false);
+  });
+
+  it('flags an overnight shift against the next morning', () => {
+    expect(overlaps([day, '20:00', '08:00'], [nextDay, '07:00', '09:00'])).toBe(true);
+    expect(overlaps([day, '20:00', '08:00'], [nextDay, '08:00', '12:00'])).toBe(false);
+  });
+
+  it('flags an overnight shift against the same evening', () => {
+    expect(overlaps([day, '22:00', '06:00'], [day, '20:00', '23:00'])).toBe(true);
   });
 });

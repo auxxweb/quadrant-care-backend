@@ -35,6 +35,19 @@ export function calculateShiftDuration(
   };
 }
 
+/** Absolute [start, end) span of a shift in epoch ms; end <= start is treated as overnight. */
+export function shiftInterval(date: Date, startTime: string, endTime: string): { start: number; end: number } {
+  const dayStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const startMinutes = parseTimeToMinutes(startTime);
+  let endMinutes = parseTimeToMinutes(endTime);
+  if (endMinutes <= startMinutes) endMinutes += 24 * 60;
+  return { start: dayStart + startMinutes * 60_000, end: dayStart + endMinutes * 60_000 };
+}
+
+export function intervalsOverlap(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
 export function parseTimeToMinutes(value: string): number {
   const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
   if (!match) return Number.NaN;

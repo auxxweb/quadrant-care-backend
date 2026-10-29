@@ -6,7 +6,7 @@ import { CareHome } from '../models/CareHome.js';
 import { User } from '../models/User.js';
 import { resolveStaffTimesheetJobRole } from '../services/employeeJobRoles.js';
 import { AppError, ForbiddenError, NotFoundError } from '../utils/errors.js';
-import { calculateShiftDuration } from '../utils/time.js';
+import { calculateShiftDuration, intervalsOverlap, shiftInterval } from '../utils/time.js';
 import { parseDateOnly } from '../utils/week.js';
 import { applyDateRange } from '../utils/query.js';
 import { nextTimesheetId } from '../services/idService.js';
@@ -78,6 +78,32 @@ async function assertDayUnder24Hours(userId: string, date: Date, extraMinutes: n
   ]);
   if ((existing?.minutes ?? 0) + extraMinutes >= MAX_DAY_MINUTES) {
     throw new AppError('Total hours for this day must be less than 24 hours.');
+  }
+}
+
+async function assertNoOverlap(userId: string, date: Date, startTime: string, endTime: string, excludeId?: string) {
+  const candidate = shiftInterval(date, startTime, endTime);
+  const from = new Date(date);
+  from.setUTCHours(0, 0, 0, 0);
+  from.setUTCDate(from.getUTCDate() - 1);
+  const to = new Date(from);
+  to.setUTCDate(to.getUTCDate() + 3);
+  const filter: Record<string, unknown> = {
+    userId: new mongoose.Types.ObjectId(userId),
+    date: { $gte: from, $lt: to },
+    status: { $nin: REJECTED_STATUSES },
+  };
+  if (excludeId) filter._id = { $ne: new mongoose.Types.ObjectId(excludeId) };
+  const nearby = await Timesheet.find(filter).select('timesheetId date startTime endTime careHomeSnapshot');
+  const conflict = nearby.find((item) => intervalsOverlap(candidate, shiftInterval(item.date, item.startTime, item.endTime)));
+  if (conflict) {
+    const day = conflict.date.toISOString().slice(0, 10);
+    const place = conflict.careHomeSnapshot?.name ? `, ${conflict.careHomeSnapshot.name}` : '';
+    throw new AppError(
+      `This shift overlaps with ${conflict.timesheetId} (${conflict.startTime}–${conflict.endTime} on ${day}${place}).`,
+      409,
+      'TIMESHEET_OVERLAP',
+    );
   }
 }
 
@@ -219,6 +245,7 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
 
     const date = parseDateOnly(req.body.date);
     await assertDayUnder24Hours(userId, date, calc.totalMinutes);
+    await assertNoOverlap(userId, date, startTime, endTime);
     if (req.user.role === 'STAFF' && req.body.submit && !req.body.careHomeSignature?.startsWith('data:image')) {
       throw new AppError('Care Home In-Charge Signature is required.');
     }
@@ -283,6 +310,7 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
     const calc = shiftDuration(startTime, endTime, breakDuration, settings.allowOvernightShifts);
     const nextDate = req.body.date ? parseDateOnly(req.body.date) : timesheet.date;
     await assertDayUnder24Hours(String(timesheet.userId), nextDate, calc.totalMinutes, String(timesheet._id));
+    await assertNoOverlap(String(timesheet.userId), nextDate, startTime, endTime, String(timesheet._id));
     timesheet.startTime = startTime;
     timesheet.endTime = endTime;
     timesheet.breakDuration = breakDuration;
@@ -326,6 +354,7 @@ export async function managerEditTimesheet(req: Request, res: Response, next: Ne
     const breakDuration = Number(req.body.breakDuration ?? timesheet.breakDuration);
     const calc = shiftDuration(startTime, endTime, breakDuration, settings.allowOvernightShifts);
     await assertDayUnder24Hours(String(timesheet.userId), timesheet.date, calc.totalMinutes, String(timesheet._id));
+    await assertNoOverlap(String(timesheet.userId), timesheet.date, startTime, endTime, String(timesheet._id));
     timesheet.startTime = startTime;
     timesheet.endTime = endTime;
     timesheet.breakDuration = breakDuration;
