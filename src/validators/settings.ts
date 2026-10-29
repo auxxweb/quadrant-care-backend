@@ -12,7 +12,7 @@ export const settingsSchema = z.object({
   passcodeLoginEnabled: z.boolean().optional(),
   passcodeLength: z.literal(5).optional(),
   requirePasscodeAfterFirstLogin: z.boolean().optional(),
-  defaultBreakDuration: z.number().min(0).optional(),
+  defaultBreakDuration: z.number().min(0, 'Break duration cannot be negative.').optional(),
   allowOvernightShifts: z.boolean().optional(),
   requireRemarks: z.boolean().optional(),
   requireInchargeName: z.boolean().optional(),

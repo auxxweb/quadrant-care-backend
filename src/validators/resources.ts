@@ -59,7 +59,7 @@ export const timesheetSchema = z.object({
   date: z.string().min(1),
   startTime: z.string().regex(/^([01]?\d|2[0-3]):([0-5]\d)$/),
   endTime: z.string().regex(/^([01]?\d|2[0-3]):([0-5]\d)$/),
-  breakDuration: z.coerce.number().min(0),
+  breakDuration: z.coerce.number().min(0, 'Break duration cannot be negative.'),
   jobRoleId: z.string().optional(),
   careHomeId: z.string().min(1, 'Select a care home.'),
   inchargeName: z.string().optional(),
@@ -71,7 +71,7 @@ export const timesheetSchema = z.object({
 export const managerEditTimesheetSchema = z.object({
   startTime: z.string().regex(/^([01]?\d|2[0-3]):([0-5]\d)$/).optional(),
   endTime: z.string().regex(/^([01]?\d|2[0-3]):([0-5]\d)$/).optional(),
-  breakDuration: z.coerce.number().min(0).optional(),
+  breakDuration: z.coerce.number().min(0, 'Break duration cannot be negative.').optional(),
 }).refine((value) => value.startTime !== undefined || value.endTime !== undefined || value.breakDuration !== undefined, {
   message: 'Update start time, end time, or break duration.',
 });

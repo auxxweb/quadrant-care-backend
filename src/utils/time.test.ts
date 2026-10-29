@@ -20,6 +20,11 @@ describe('time calculation', () => {
     expect(() => calculateShiftDuration('08:00', '09:00', 90)).toThrow();
   });
 
+  it('rejects a negative or non-numeric break', () => {
+    expect(() => calculateShiftDuration('08:00', '20:00', -30)).toThrow(/cannot be negative/);
+    expect(() => calculateShiftDuration('08:00', '20:00', Number.NaN)).toThrow(/cannot be negative/);
+  });
+
   it('rejects a 24-hour shift', () => {
     expect(() => calculateShiftDuration('08:00', '08:00', 0)).toThrow(/less than 24 hours/);
   });

@@ -9,7 +9,7 @@ export function calculateShiftDuration(
   if (Number.isNaN(start) || Number.isNaN(end)) {
     throw new Error('Start time and end time are required.');
   }
-  if (breakMinutes < 0) {
+  if (!Number.isFinite(breakMinutes) || breakMinutes < 0) {
     throw new Error('Break duration cannot be negative.');
   }
 
