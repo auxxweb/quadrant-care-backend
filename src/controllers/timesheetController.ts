@@ -129,7 +129,14 @@ function buildFilter(req: Request) {
   if (ownerClause) clauses.push(ownerClause);
   if (req.query.search) {
     const rx = new RegExp(escapeRegex(String(req.query.search)), 'i');
-    clauses.push({ $or: [{ timesheetId: rx }, { 'employeeSnapshot.name': rx }, { 'employeeSnapshot.employeeId': rx }] });
+    clauses.push({
+      $or: [
+        { timesheetId: rx },
+        { 'employeeSnapshot.name': rx },
+        { 'employeeSnapshot.employeeId': rx },
+        { 'careHomeSnapshot.name': rx },
+      ],
+    });
   }
   if (clauses.length === 1) Object.assign(filter, clauses[0]);
   if (clauses.length > 1) filter.$and = clauses;
