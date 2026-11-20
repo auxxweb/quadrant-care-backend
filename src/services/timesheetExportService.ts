@@ -2,7 +2,11 @@ import type { Request, Response } from 'express';
 import { timesheetStatusLabel } from '../config/constants.js';
 import type { TimesheetDocument } from '../models/Timesheet.js';
 import { AppError } from '../utils/errors.js';
-import { generateGroupedTimesheetPdf } from './pdfService.js';
+import { streamGroupedTimesheetPdf, withPdfExportLock } from './pdfService.js';
+
+/** Max rows allowed for a synchronous PDF export (CSV may be larger). */
+export const PDF_EXPORT_MAX_ROWS = 500;
+export const CSV_EXPORT_MAX_ROWS = 2000;
 
 function escapeCsv(value: unknown) {
   const text = String(value ?? '');
@@ -57,11 +61,14 @@ export function buildTimesheetCsv(items: TimesheetDocument[], productiveOnly: bo
   return `${header}\n${rows.join('\n')}\n`;
 }
 
-export async function buildTimesheetPdfExport(
-  items: TimesheetDocument[],
-  options: { productiveOnly?: boolean } = {},
-) {
-  return generateGroupedTimesheetPdf(groupTimesheetsForPdf(items), options);
+export function assertPdfExportSize(count: number) {
+  if (count > PDF_EXPORT_MAX_ROWS) {
+    throw new AppError(
+      `Too many timesheets for PDF export (${count}). Narrow the date range or filters to ${PDF_EXPORT_MAX_ROWS} or fewer entries, or use CSV export.`,
+      400,
+      'PDF_EXPORT_TOO_LARGE',
+    );
+  }
 }
 
 export async function sendTimesheetExport(
@@ -81,12 +88,10 @@ export async function sendTimesheetExport(
   }
   if (format === 'pdf') {
     if (!items.length) throw new AppError('No timesheets match the current filters.');
-    const pdf = await buildTimesheetPdfExport(items, { productiveOnly });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="quadrant-care-timesheets.pdf"');
-    res.setHeader('Content-Length', String(pdf.length));
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(pdf);
+    assertPdfExportSize(items.length);
+    await withPdfExportLock(async () => {
+      await streamGroupedTimesheetPdf(res, groupTimesheetsForPdf(items), { productiveOnly });
+    });
     return;
   }
   res.json({

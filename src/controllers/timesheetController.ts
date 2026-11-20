@@ -16,9 +16,14 @@ import { auditFromRequest } from '../services/auditService.js';
 import { notifyAdmins, notifySuperAdmins, notifyUser } from '../services/notificationService.js';
 import { sendEmail } from '../services/emailService.js';
 import { storageService } from '../services/storageService.js';
-import { generateTimesheetPdf } from '../services/pdfService.js';
+import { generateTimesheetPdf, withPdfExportLock } from '../services/pdfService.js';
 import { recalculateProductiveHoursForUserWeek } from '../services/productiveHoursService.js';
-import { sendTimesheetExport } from '../services/timesheetExportService.js';
+import {
+  CSV_EXPORT_MAX_ROWS,
+  PDF_EXPORT_MAX_ROWS,
+  assertPdfExportSize,
+  sendTimesheetExport,
+} from '../services/timesheetExportService.js';
 import type { TimesheetStatus } from '../config/constants.js';
 
 function escapeRegex(value: string) {
@@ -196,7 +201,14 @@ export async function listTimesheets(req: Request, res: Response, next: NextFunc
 export async function exportTimesheets(req: Request, res: Response, next: NextFunction) {
   try {
     const filter = await scopedListFilter(req);
-    const items = await Timesheet.find(filter).sort({ date: -1, createdAt: -1 }).limit(2000);
+    const format = String(req.query.format ?? '').toLowerCase();
+    if (format === 'pdf') {
+      const count = await Timesheet.countDocuments(filter);
+      if (!count) throw new AppError('No timesheets match the current filters.');
+      assertPdfExportSize(count);
+    }
+    const limit = format === 'pdf' ? PDF_EXPORT_MAX_ROWS : CSV_EXPORT_MAX_ROWS;
+    const items = await Timesheet.find(filter).sort({ date: -1, createdAt: -1 }).limit(limit);
     await sendTimesheetExport(req, res, items);
   } catch (error) {
     next(error);
@@ -587,14 +599,17 @@ export async function superAdminReject(req: Request, res: Response, next: NextFu
 export async function downloadPdf(req: Request, res: Response, next: NextFunction) {
   try {
     const timesheet = await loadTimesheetForUser(req);
-    const pdf = await generateTimesheetPdf(timesheet, {
-      productiveOnly: req.user?.metricsFocus === 'PRODUCTIVE',
-    });
     const safeName = String(timesheet.timesheetId || 'timesheet').replace(/[^\w.-]+/g, '_');
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
-    res.setHeader('Content-Length', String(pdf.length));
-    res.send(pdf);
+    await withPdfExportLock(async () => {
+      const pdf = await generateTimesheetPdf(timesheet, {
+        productiveOnly: req.user?.metricsFocus === 'PRODUCTIVE',
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
+      res.setHeader('Content-Length', String(pdf.length));
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(pdf);
+    });
   } catch (error) {
     next(error);
   }
