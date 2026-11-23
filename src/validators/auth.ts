@@ -36,7 +36,6 @@ export const staffSignupSchema = z.object({
   password: z.string().min(8, 'Password must be at least 8 characters.'),
   jobRoleIds: z.array(z.string().min(1)).min(1, 'Select at least one job role.'),
   primaryJobRoleId: z.string().min(1).optional(),
-  careHomeId: z.string().min(1, 'Select your care home.'),
   joiningDate: z.string().optional(),
   passcode: z.string().regex(/^\d{5}$/, 'Passcode must be 5 digits.').optional(),
 });

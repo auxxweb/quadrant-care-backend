@@ -6,7 +6,6 @@ const base = {
   email: 'ada@example.com',
   mobile: '07123456789',
   password: 'password1',
-  careHomeId: 'home-1',
 };
 
 describe('staffSignupSchema', () => {

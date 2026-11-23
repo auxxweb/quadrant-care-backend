@@ -2,7 +2,6 @@ import type { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env.js';
 import { User } from '../models/User.js';
 import { Employee, EMPLOYEE_POPULATE } from '../models/Employee.js';
-import { CareHome } from '../models/CareHome.js';
 import { JobRole } from '../models/JobRole.js';
 import { SystemSettings } from '../models/SystemSettings.js';
 import {
@@ -144,17 +143,13 @@ export async function signupOptions(_req: Request, res: Response, next: NextFunc
   try {
     const settings = await getSettings();
     if (settings.staffSignupEnabled === false) {
-      res.json({ staffSignupEnabled: false, jobRoles: [], careHomes: [] });
+      res.json({ staffSignupEnabled: false, jobRoles: [] });
       return;
     }
-    const [jobRoles, careHomes] = await Promise.all([
-      JobRole.find({ status: 'ACTIVE' }).sort({ name: 1 }).select('name'),
-      CareHome.find({ status: 'ACTIVE' }).sort({ name: 1 }).select('name city'),
-    ]);
+    const jobRoles = await JobRole.find({ status: 'ACTIVE' }).sort({ name: 1 }).select('name');
     res.json({
       staffSignupEnabled: true,
       jobRoles: jobRoles.map((item) => ({ _id: String(item._id), name: item.name })),
-      careHomes: careHomes.map((item) => ({ _id: String(item._id), name: item.name, city: item.city })),
     });
   } catch (error) {
     next(error);
@@ -168,14 +163,13 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
       throw new AppError('Staff self-signup is currently disabled. Please ask an admin to create your account.', 403, 'SIGNUP_DISABLED');
     }
 
-    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, careHomeId, joiningDate, passcode } = req.body as {
+    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, joiningDate, passcode } = req.body as {
       fullName: string;
       email: string;
       mobile: string;
       password: string;
       jobRoleIds: string[];
       primaryJobRoleId?: string;
-      careHomeId: string;
       joiningDate?: string;
       passcode?: string;
     };
@@ -183,8 +177,6 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
     assertPasswordStrength(password);
     const roles = normalizeEmployeeJobRoles(jobRoleIds, primaryJobRoleId);
     await assertAssignableJobRoles(roles.jobRoleIds);
-    const careHome = await CareHome.findById(careHomeId);
-    if (!careHome || careHome.status !== 'ACTIVE') throw new AppError('Select an active care home.');
 
     const emailNorm = email.toLowerCase().trim();
     const mobileNorm = mobile.trim();
@@ -216,7 +208,6 @@ export async function staffSignup(req: Request, res: Response, next: NextFunctio
         mobile: mobileNorm,
         jobRoleIds: roles.jobRoleIds,
         primaryJobRoleId: roles.primaryJobRoleId,
-        careHomeId,
         joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
         status: 'ACTIVE',
         loginEnabled: true,

@@ -56,7 +56,7 @@ async function seed() {
     loginEnabled: true,
   });
 
-  const chadwick = await CareHome.create({
+  await CareHome.create({
     name: 'Chadwick',
     address: '12 Chadwick Lane',
     city: 'Manchester',
@@ -103,7 +103,6 @@ async function seed() {
     mobile: '07333333333',
     jobRoleIds: [hca._id],
     primaryJobRoleId: hca._id,
-    careHomeId: chadwick._id,
     joiningDate: new Date('2024-01-15'),
     status: 'ACTIVE',
     loginEnabled: true,

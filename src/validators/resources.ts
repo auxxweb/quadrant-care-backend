@@ -9,7 +9,6 @@ export const createEmployeeSchema = z.object({
   address: z.string().optional(),
   jobRoleIds: z.array(z.string().min(1)).min(1, 'Select at least one job role.'),
   primaryJobRoleId: z.string().min(1).optional(),
-  careHomeId: z.string().optional(),
   joiningDate: z.string().min(1),
   loginEnabled: z.boolean().optional(),
   passcode: z.string().regex(/^\d{5}$/).optional(),

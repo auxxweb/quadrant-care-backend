@@ -24,7 +24,6 @@ export async function listEmployees(req: Request, res: Response, next: NextFunct
     const limit = Number(req.query.limit ?? 20);
     const filter: Record<string, unknown> = {};
     if (req.query.status) filter.status = req.query.status;
-    if (req.query.careHomeId) filter.careHomeId = req.query.careHomeId;
     if (req.query.jobRoleId) filter.jobRoleIds = req.query.jobRoleId;
     if (req.query.search) {
       const rx = new RegExp(escapeRegex(String(req.query.search)), 'i');
@@ -47,15 +46,11 @@ export async function listEmployees(req: Request, res: Response, next: NextFunct
 
 export async function createEmployee(req: Request, res: Response, next: NextFunction) {
   try {
-    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, careHomeId, joiningDate, dateOfBirth, address, loginEnabled, passcode, profilePhoto } =
+    const { fullName, email, mobile, password, jobRoleIds, primaryJobRoleId, joiningDate, dateOfBirth, address, loginEnabled, passcode, profilePhoto } =
       req.body;
     assertPasswordStrength(password);
     const roles = normalizeEmployeeJobRoles(jobRoleIds, primaryJobRoleId);
     await assertAssignableJobRoles(roles.jobRoleIds);
-    if (careHomeId) {
-      const careHome = await CareHome.findById(careHomeId);
-      if (!careHome || careHome.status !== 'ACTIVE') throw new AppError('Select an active care home.');
-    }
     if (await User.findOne({ $or: [{ email }, { mobile }] })) throw new ConflictError('Email or mobile already exists.');
 
     const employeeId = await nextEmployeeId();
@@ -88,7 +83,6 @@ export async function createEmployee(req: Request, res: Response, next: NextFunc
       profilePhoto: photoPath,
       jobRoleIds: roles.jobRoleIds,
       primaryJobRoleId: roles.primaryJobRoleId,
-      ...(careHomeId ? { careHomeId } : {}),
       joiningDate,
       status: 'ACTIVE',
       loginEnabled: loginEnabled !== false,
@@ -148,11 +142,6 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
       await assertAssignableJobRoles(roles.jobRoleIds, { allowExistingInactiveIds: currentIds });
       employee.set('jobRoleIds', roles.jobRoleIds);
       employee.set('primaryJobRoleId', roles.primaryJobRoleId);
-    }
-    if (body.careHomeId) {
-      const careHome = await CareHome.findById(body.careHomeId);
-      if (!careHome) throw new AppError('Care home not found.');
-      employee.careHomeId = body.careHomeId;
     }
     if (body.joiningDate) employee.joiningDate = body.joiningDate;
     if (body.status) {
@@ -374,14 +363,6 @@ export async function updateCareHome(req: Request, res: Response, next: NextFunc
 
 export async function deleteCareHome(req: Request, res: Response, next: NextFunction) {
   try {
-    const assigned = await Employee.countDocuments({ careHomeId: req.params.id });
-    if (assigned > 0) {
-      throw new AppError(
-        `This care home has ${assigned} employee${assigned === 1 ? '' : 's'} assigned. Reassign them before deleting, or deactivate the care home instead.`,
-        400,
-        'IN_USE',
-      );
-    }
     const careHome = await CareHome.findByIdAndDelete(req.params.id);
     if (!careHome) throw new NotFoundError('Care home not found.');
     await auditFromRequest(req.user, 'DELETE_CARE_HOME', 'CareHome', String(careHome._id), `Deleted care home ${careHome.name}`, req);
