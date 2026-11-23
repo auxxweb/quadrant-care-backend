@@ -11,7 +11,14 @@ import { parseDateOnly } from '../utils/week.js';
 import { applyDateRange } from '../utils/query.js';
 import { nextTimesheetId } from '../services/idService.js';
 import { getSettings } from '../services/authService.js';
-import { assertTransition, canManagerEditHours, canStaffEdit, TIMESHEET_STATUS } from '../services/timesheetStatus.js';
+import {
+  assertTransition,
+  canManagerEditHours,
+  canOwnerDelete,
+  canOwnerWithdraw,
+  canStaffEdit,
+  TIMESHEET_STATUS,
+} from '../services/timesheetStatus.js';
 import { auditFromRequest } from '../services/auditService.js';
 import { notifyAdmins, notifySuperAdmins, notifyUser } from '../services/notificationService.js';
 import { sendEmail } from '../services/emailService.js';
@@ -320,22 +327,41 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
     if (!req.user || !['STAFF', 'ADMIN'].includes(req.user.role)) throw new ForbiddenError();
     if (String(timesheet.userId) !== req.user.id) throw new ForbiddenError('You can only edit your own timesheets.');
     if (!canStaffEdit(timesheet.status as TimesheetStatus)) {
-      throw new AppError('This timesheet can no longer be edited.');
+      throw new AppError('Approved timesheets cannot be edited.');
     }
     const settings = await getSettings();
     const startTime = req.body.startTime ?? timesheet.startTime;
     const endTime = req.body.endTime ?? timesheet.endTime;
     const breakDuration = Number(req.body.breakDuration ?? timesheet.breakDuration);
     const calc = shiftDuration(startTime, endTime, breakDuration, settings.allowOvernightShifts);
+    const oldDate = timesheet.date;
     const nextDate = req.body.date ? parseDateOnly(req.body.date) : timesheet.date;
     await assertDayUnder24Hours(String(timesheet.userId), nextDate, calc.totalMinutes, String(timesheet._id));
     await assertNoOverlap(String(timesheet.userId), nextDate, startTime, endTime, String(timesheet._id));
+
+    if (req.body.careHomeId && String(req.body.careHomeId) !== String(timesheet.careHomeId)) {
+      const careHome = await CareHome.findById(req.body.careHomeId);
+      if (!careHome) throw new AppError('Select a care home.');
+      if (careHome.status !== 'ACTIVE') throw new AppError('Select an active care home.');
+      timesheet.careHomeId = careHome._id;
+      timesheet.careHomeSnapshot = { name: careHome.name };
+    }
+
+    if (timesheet.ownerRole !== 'ADMIN' && req.body.jobRoleId) {
+      const employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
+      if (!employee) throw new ForbiddenError('Employee profile not found.');
+      const jobRole = resolveStaffTimesheetJobRole(employee, req.body.jobRoleId);
+      if (!jobRole) throw new AppError('Select a job role.');
+      timesheet.jobRoleId = jobRole._id as typeof timesheet.jobRoleId;
+      timesheet.jobRoleSnapshot = { name: jobRole.name || 'Staff' };
+    }
+
     timesheet.startTime = startTime;
     timesheet.endTime = endTime;
     timesheet.breakDuration = breakDuration;
     timesheet.totalMinutes = calc.totalMinutes;
     timesheet.totalHoursDisplay = calc.formattedHours;
-    if (req.body.date) timesheet.date = parseDateOnly(req.body.date);
+    if (req.body.date) timesheet.date = nextDate;
     if (timesheet.ownerRole === 'ADMIN') {
       timesheet.inchargeName = await superAdminInchargeName();
     } else if (req.body.inchargeName !== undefined) {
@@ -347,6 +373,9 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
     }
     await timesheet.save();
     await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
+    if (oldDate.getTime() !== timesheet.date.getTime()) {
+      await recalculateProductiveHoursForUserWeek(String(timesheet.userId), oldDate);
+    }
     await auditFromRequest(req.user, 'UPDATE_TIMESHEET', 'Timesheet', String(timesheet._id), `Updated ${timesheet.timesheetId}`, req);
     res.json(await Timesheet.findById(timesheet._id));
   } catch (error) {
@@ -450,6 +479,95 @@ export async function submitTimesheet(req: Request, res: Response, next: NextFun
     if (String(timesheet.userId) !== req.user.id) throw new ForbiddenError('You can only submit your own timesheets.');
     await submitExisting(timesheet, req);
     res.json(timesheet);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function withdrawTimesheet(req: Request, res: Response, next: NextFunction) {
+  try {
+    const timesheet = await loadTimesheetForUser(req);
+    if (!req.user || !['STAFF', 'ADMIN'].includes(req.user.role)) throw new ForbiddenError();
+    if (String(timesheet.userId) !== req.user.id) throw new ForbiddenError('You can only withdraw your own timesheets.');
+    const status = timesheet.status as TimesheetStatus;
+    if (!canOwnerWithdraw(status, timesheet.ownerRole)) {
+      throw new AppError('This timesheet cannot be withdrawn.');
+    }
+    assertTransition(status, TIMESHEET_STATUS.DRAFT);
+    timesheet.status = TIMESHEET_STATUS.DRAFT;
+    timesheet.rejectionReason = undefined;
+    timesheet.adminRemarks = undefined;
+    timesheet.adminReviewedBy = undefined;
+    timesheet.adminReviewedAt = undefined;
+    timesheet.adminSignaturePath = undefined;
+    timesheet.superAdminApprovedBy = undefined;
+    timesheet.superAdminApprovedAt = undefined;
+    timesheet.superAdminRemarks = undefined;
+    timesheet.superAdminSignaturePath = undefined;
+    timesheet.history.push({
+      status: TIMESHEET_STATUS.DRAFT,
+      actorId: req.user.id,
+      actorName: req.user.name,
+      note: 'Withdrawn to draft',
+      at: new Date(),
+    });
+    await timesheet.save();
+    await auditFromRequest(req.user, 'WITHDRAW_TIMESHEET', 'Timesheet', String(timesheet._id), `Withdrew ${timesheet.timesheetId}`, req);
+    res.json(await Timesheet.findById(timesheet._id));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteTimesheet(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new ForbiddenError();
+    const timesheet = await loadTimesheetForUser(req);
+    const status = timesheet.status as TimesheetStatus;
+    const isOwner = String(timesheet.userId) === req.user.id;
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+
+    if (isSuperAdmin) {
+      if (status === TIMESHEET_STATUS.APPROVED) {
+        const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+        if (reason.length < 3) {
+          throw new AppError('A reason is required to void an approved timesheet.', 400, 'VOID_REASON_REQUIRED');
+        }
+        const id = String(timesheet._id);
+        const timesheetId = timesheet.timesheetId;
+        const userId = String(timesheet.userId);
+        const date = timesheet.date;
+        await Timesheet.findByIdAndDelete(timesheet._id);
+        await recalculateProductiveHoursForUserWeek(userId, date);
+        await auditFromRequest(req.user, 'VOID_TIMESHEET', 'Timesheet', id, `Voided approved ${timesheetId}: ${reason}`, req);
+        res.json({ message: 'Approved timesheet voided.' });
+        return;
+      }
+      const id = String(timesheet._id);
+      const timesheetId = timesheet.timesheetId;
+      const userId = String(timesheet.userId);
+      const date = timesheet.date;
+      await Timesheet.findByIdAndDelete(timesheet._id);
+      await recalculateProductiveHoursForUserWeek(userId, date);
+      await auditFromRequest(req.user, 'DELETE_TIMESHEET', 'Timesheet', id, `Deleted ${timesheetId}`, req);
+      res.json({ message: 'Timesheet deleted.' });
+      return;
+    }
+
+    if (!['STAFF', 'ADMIN'].includes(req.user.role) || !isOwner) {
+      throw new ForbiddenError('You can only delete your own timesheets.');
+    }
+    if (!canOwnerDelete(status)) {
+      throw new AppError('Approved timesheets cannot be deleted.');
+    }
+    const id = String(timesheet._id);
+    const timesheetId = timesheet.timesheetId;
+    const userId = String(timesheet.userId);
+    const date = timesheet.date;
+    await Timesheet.findByIdAndDelete(timesheet._id);
+    await recalculateProductiveHoursForUserWeek(userId, date);
+    await auditFromRequest(req.user, 'DELETE_TIMESHEET', 'Timesheet', id, `Deleted ${timesheetId}`, req);
+    res.json({ message: 'Timesheet deleted.' });
   } catch (error) {
     next(error);
   }

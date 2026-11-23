@@ -90,3 +90,10 @@ export const approveSchema = z.object({
   remarks: z.string().optional(),
   signature: z.string().optional(),
 });
+
+export const deleteTimesheetSchema = z
+  .object({
+    reason: z.string().trim().min(3, 'A reason is required.').optional(),
+  })
+  .nullish()
+  .transform((value) => value ?? {});

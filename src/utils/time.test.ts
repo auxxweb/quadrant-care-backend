@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { calculateShiftDuration, formatMinutes, intervalsOverlap, shiftInterval } from './time.js';
-import { assertTransition, canStaffEdit } from '../services/timesheetStatus.js';
+import {
+  assertTransition,
+  canManagerEditHours,
+  canOwnerDelete,
+  canOwnerWithdraw,
+  canStaffEdit,
+} from '../services/timesheetStatus.js';
 import { TIMESHEET_STATUS } from '../config/constants.js';
 
 describe('time calculation', () => {
@@ -49,6 +55,29 @@ describe('timesheet status transitions', () => {
     assertTransition(TIMESHEET_STATUS.SUPER_ADMIN_REJECTED, TIMESHEET_STATUS.RESUBMITTED);
     expect(canStaffEdit(TIMESHEET_STATUS.ADMIN_REJECTED)).toBe(true);
     expect(canStaffEdit(TIMESHEET_STATUS.APPROVED)).toBe(false);
+  });
+
+  it('allows owners to withdraw in-review sheets back to draft', () => {
+    assertTransition(TIMESHEET_STATUS.SUBMITTED, TIMESHEET_STATUS.DRAFT);
+    assertTransition(TIMESHEET_STATUS.ADMIN_REVIEW, TIMESHEET_STATUS.DRAFT);
+    assertTransition(TIMESHEET_STATUS.RESUBMITTED, TIMESHEET_STATUS.DRAFT);
+    assertTransition(TIMESHEET_STATUS.SUPER_ADMIN_REVIEW, TIMESHEET_STATUS.DRAFT);
+    expect(canOwnerWithdraw(TIMESHEET_STATUS.SUBMITTED, 'STAFF')).toBe(true);
+    expect(canOwnerWithdraw(TIMESHEET_STATUS.SUPER_ADMIN_REVIEW, 'ADMIN')).toBe(true);
+    expect(canOwnerWithdraw(TIMESHEET_STATUS.SUBMITTED, 'ADMIN')).toBe(false);
+    expect(canOwnerWithdraw(TIMESHEET_STATUS.APPROVED, 'STAFF')).toBe(false);
+  });
+
+  it('allows owner edit and delete until approved (permissive)', () => {
+    expect(canStaffEdit(TIMESHEET_STATUS.SUBMITTED)).toBe(true);
+    expect(canStaffEdit(TIMESHEET_STATUS.ADMIN_REVIEW)).toBe(true);
+    expect(canStaffEdit(TIMESHEET_STATUS.APPROVED)).toBe(false);
+    expect(canOwnerDelete(TIMESHEET_STATUS.DRAFT)).toBe(true);
+    expect(canOwnerDelete(TIMESHEET_STATUS.ADMIN_REJECTED)).toBe(true);
+    expect(canOwnerDelete(TIMESHEET_STATUS.SUBMITTED)).toBe(true);
+    expect(canOwnerDelete(TIMESHEET_STATUS.APPROVED)).toBe(false);
+    expect(canManagerEditHours(TIMESHEET_STATUS.SUBMITTED)).toBe(true);
+    expect(canManagerEditHours(TIMESHEET_STATUS.APPROVED)).toBe(false);
   });
 });
 
