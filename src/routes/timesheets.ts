@@ -28,7 +28,7 @@ timesheetRouter.get('/', listTimesheets);
 timesheetRouter.get('/export', exportTimesheets);
 timesheetRouter.get('/summary/weekly', weeklySummary);
 timesheetRouter.get('/summary/monthly', monthlySummary);
-timesheetRouter.post('/', authorize('STAFF', 'ADMIN'), validate(timesheetSchema), createTimesheet);
+timesheetRouter.post('/', authorize('STAFF', 'ADMIN', 'SUPER_ADMIN'), validate(timesheetSchema), createTimesheet);
 timesheetRouter.get('/:id', getTimesheet);
 timesheetRouter.put('/:id', authorize('STAFF', 'ADMIN', 'SUPER_ADMIN'), validate(timesheetSchema.partial()), updateTimesheet);
 timesheetRouter.patch('/:id/hours', authorize('ADMIN', 'SUPER_ADMIN'), validate(managerEditTimesheetSchema), managerEditTimesheet);

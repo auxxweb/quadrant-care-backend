@@ -65,6 +65,8 @@ export const timesheetSchema = z.object({
   careHomeSignature: z.string().min(20, 'Care Home In-Charge Signature is required.').optional(),
   remarks: z.string().optional(),
   submit: z.boolean().optional(),
+  /** Admin only: Employee _id to create the timesheet on behalf of. Ignored for staff. */
+  employeeId: z.string().regex(/^[a-f\d]{24}$/i, 'Select a valid employee.').optional(),
 });
 
 export const managerEditTimesheetSchema = z.object({

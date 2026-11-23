@@ -54,4 +54,13 @@ export function canManagerFullEdit(
   return false;
 }
 
+/** True when the first history entry (creation) was made by the given user. */
+export function isCreatedBy(
+  timesheet: { history?: Array<{ actorId?: unknown }> | null },
+  userId: string,
+): boolean {
+  const creatorId = timesheet.history?.[0]?.actorId;
+  return creatorId != null && String(creatorId) === String(userId);
+}
+
 export { TIMESHEET_STATUS };

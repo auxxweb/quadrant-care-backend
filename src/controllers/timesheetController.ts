@@ -18,6 +18,7 @@ import {
   canOwnerDelete,
   canOwnerWithdraw,
   canStaffEdit,
+  isCreatedBy,
   TIMESHEET_STATUS,
 } from '../services/timesheetStatus.js';
 import { auditFromRequest } from '../services/auditService.js';
@@ -225,13 +226,18 @@ export async function exportTimesheets(req: Request, res: Response, next: NextFu
 
 export async function createTimesheet(req: Request, res: Response, next: NextFunction) {
   try {
-    if (!req.user || !['STAFF', 'ADMIN'].includes(req.user.role)) throw new ForbiddenError();
+    if (!req.user || !['STAFF', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) throw new ForbiddenError();
     const settings = await getSettings();
     const startTime = req.body.startTime;
     const endTime = req.body.endTime;
     const breakDuration = Number(req.body.breakDuration ?? settings.defaultBreakDuration);
     const calc = shiftDuration(startTime, endTime, breakDuration, settings.allowOvernightShifts);
-    if (req.user.role === 'STAFF' && settings.requireInchargeName && !req.body.inchargeName) throw new AppError('Incharge name is required.');
+    // An admin or super admin may create a staff timesheet on behalf of an employee.
+    // Super admins have no timesheets of their own, so they must always pick an employee.
+    if (req.user.role === 'SUPER_ADMIN' && !req.body.employeeId) throw new AppError('Select an employee.');
+    const onBehalf = (req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN') && Boolean(req.body.employeeId);
+    const isStaffSheet = req.user.role === 'STAFF' || onBehalf;
+    if (isStaffSheet && settings.requireInchargeName && !req.body.inchargeName) throw new AppError('Incharge name is required.');
     if (settings.requireRemarks && !req.body.remarks) throw new AppError('Remarks are required.');
 
     const careHome = req.body.careHomeId ? await CareHome.findById(req.body.careHomeId) : null;
@@ -244,9 +250,16 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
     let jobRole: { _id: unknown; name?: string } | null = null;
     let inchargeName = req.body.inchargeName as string | undefined;
 
-    if (req.user.role === 'STAFF') {
-      const employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
-      if (!employee) throw new ForbiddenError('Employee profile not found.');
+    if (isStaffSheet) {
+      let employee;
+      if (onBehalf) {
+        employee = await Employee.findById(req.body.employeeId).populate([...EMPLOYEE_POPULATE]);
+        if (!employee) throw new NotFoundError('Employee not found.');
+        if (employee.status !== 'ACTIVE') throw new AppError('Timesheets can only be created for active employees.');
+      } else {
+        employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
+        if (!employee) throw new ForbiddenError('Employee profile not found.');
+      }
       jobRole = resolveStaffTimesheetJobRole(employee, req.body.jobRoleId);
       employeeId = employee._id;
       userId = String(employee.userId);
@@ -273,11 +286,11 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
     const date = parseDateOnly(req.body.date);
     await assertDayUnder24Hours(userId, date, calc.totalMinutes);
     await assertNoOverlap(userId, date, startTime, endTime);
-    if (req.user.role === 'STAFF' && req.body.submit && !req.body.careHomeSignature?.startsWith('data:image')) {
+    if (isStaffSheet && req.body.submit && !req.body.careHomeSignature?.startsWith('data:image')) {
       throw new AppError('Care Home In-Charge Signature is required.');
     }
     let careHomeSignaturePath: string | undefined;
-    if (req.user.role === 'STAFF' && req.body.careHomeSignature?.startsWith('data:image')) {
+    if (isStaffSheet && req.body.careHomeSignature?.startsWith('data:image')) {
       careHomeSignaturePath = await storageService.saveBase64Image(req.body.careHomeSignature, 'signatures');
     }
     const timesheet = await Timesheet.create({
@@ -299,11 +312,36 @@ export async function createTimesheet(req: Request, res: Response, next: NextFun
       ...(careHomeSignaturePath ? { careHomeSignaturePath } : {}),
       remarks: req.body.remarks,
       status: TIMESHEET_STATUS.DRAFT,
-      history: [{ status: TIMESHEET_STATUS.DRAFT, actorId: req.user.id, actorName: req.user.name, note: 'Created', at: new Date() }],
+      history: [{
+        status: TIMESHEET_STATUS.DRAFT,
+        actorId: req.user.id,
+        actorName: req.user.name,
+        note: onBehalf ? `Created by admin on behalf of ${employeeSnapshot.name}` : 'Created',
+        at: new Date(),
+      }],
     });
+
+    if (onBehalf) {
+      await auditFromRequest(
+        req.user,
+        'CREATE_TIMESHEET_ON_BEHALF',
+        'Timesheet',
+        String(timesheet._id),
+        `Created ${timesheet.timesheetId} for ${employeeSnapshot.name}`,
+        req,
+      );
+    }
 
     if (req.body.submit) {
       await submitExisting(timesheet, req);
+    } else if (onBehalf) {
+      await notifyUser(
+        userId,
+        'Timesheet created for you',
+        `${req.user.name} created draft timesheet ${timesheet.timesheetId} for you. Review and submit it.`,
+        'CREATED',
+        String(timesheet._id),
+      );
     }
     await recalculateProductiveHoursForUserWeek(userId, date);
     const refreshed = await Timesheet.findById(timesheet._id);
@@ -611,6 +649,9 @@ export async function adminVerify(req: Request, res: Response, next: NextFunctio
     if (timesheet.ownerRole === 'ADMIN' || String(timesheet.userId) === req.user!.id) {
       throw new ForbiddenError('Admin timesheets are approved by a Super Admin.');
     }
+    if (isCreatedBy(timesheet, req.user!.id)) {
+      throw new ForbiddenError('You cannot review a timesheet you created. Another admin must review it.');
+    }
     const settings = await getSettings();
     const current = timesheet.status as TimesheetStatus;
     if (current === TIMESHEET_STATUS.SUBMITTED) {
@@ -668,6 +709,9 @@ export async function adminReject(req: Request, res: Response, next: NextFunctio
     if (timesheet.ownerRole === 'ADMIN' || String(timesheet.userId) === req.user!.id) {
       throw new ForbiddenError('Admin timesheets are reviewed by a Super Admin.');
     }
+    if (isCreatedBy(timesheet, req.user!.id)) {
+      throw new ForbiddenError('You cannot review a timesheet you created. Another admin must review it.');
+    }
     const current = timesheet.status as TimesheetStatus;
     if (current === TIMESHEET_STATUS.SUBMITTED) timesheet.status = TIMESHEET_STATUS.ADMIN_REVIEW;
     assertTransition(timesheet.status as TimesheetStatus, TIMESHEET_STATUS.ADMIN_REJECTED);
@@ -696,6 +740,9 @@ export async function adminReject(req: Request, res: Response, next: NextFunctio
 export async function superAdminApprove(req: Request, res: Response, next: NextFunction) {
   try {
     const timesheet = await loadTimesheetForUser(req);
+    if (isCreatedBy(timesheet, req.user!.id)) {
+      throw new ForbiddenError('You cannot review a timesheet you created. Another admin must review it.');
+    }
     assertTransition(timesheet.status as TimesheetStatus, TIMESHEET_STATUS.APPROVED);
     const settings = await getSettings();
     if (settings.requireSuperAdminSignature && req.body.signature) {
@@ -725,6 +772,9 @@ export async function superAdminApprove(req: Request, res: Response, next: NextF
 export async function superAdminReject(req: Request, res: Response, next: NextFunction) {
   try {
     const timesheet = await loadTimesheetForUser(req);
+    if (isCreatedBy(timesheet, req.user!.id)) {
+      throw new ForbiddenError('You cannot review a timesheet you created. Another admin must review it.');
+    }
     assertTransition(timesheet.status as TimesheetStatus, TIMESHEET_STATUS.SUPER_ADMIN_REJECTED);
     timesheet.status = TIMESHEET_STATUS.SUPER_ADMIN_REJECTED;
     timesheet.rejectionReason = req.body.reason;
