@@ -3,6 +3,7 @@ import { calculateShiftDuration, formatMinutes, intervalsOverlap, shiftInterval 
 import {
   assertTransition,
   canManagerEditHours,
+  canManagerFullEdit,
   canOwnerDelete,
   canOwnerWithdraw,
   canStaffEdit,
@@ -78,6 +79,15 @@ describe('timesheet status transitions', () => {
     expect(canOwnerDelete(TIMESHEET_STATUS.APPROVED)).toBe(false);
     expect(canManagerEditHours(TIMESHEET_STATUS.SUBMITTED)).toBe(true);
     expect(canManagerEditHours(TIMESHEET_STATUS.APPROVED)).toBe(false);
+  });
+
+  it('allows admin/super-admin full edit on staff sheets until approved', () => {
+    expect(canManagerFullEdit(TIMESHEET_STATUS.SUBMITTED, { actorRole: 'ADMIN', ownerRole: 'STAFF', isOwner: false })).toBe(true);
+    expect(canManagerFullEdit(TIMESHEET_STATUS.DRAFT, { actorRole: 'ADMIN', ownerRole: 'STAFF', isOwner: false })).toBe(true);
+    expect(canManagerFullEdit(TIMESHEET_STATUS.APPROVED, { actorRole: 'ADMIN', ownerRole: 'STAFF', isOwner: false })).toBe(false);
+    expect(canManagerFullEdit(TIMESHEET_STATUS.SUBMITTED, { actorRole: 'ADMIN', ownerRole: 'ADMIN', isOwner: false })).toBe(false);
+    expect(canManagerFullEdit(TIMESHEET_STATUS.SUPER_ADMIN_REVIEW, { actorRole: 'SUPER_ADMIN', ownerRole: 'ADMIN', isOwner: false })).toBe(true);
+    expect(canManagerFullEdit(TIMESHEET_STATUS.SUBMITTED, { actorRole: 'ADMIN', ownerRole: 'STAFF', isOwner: true })).toBe(false);
   });
 });
 

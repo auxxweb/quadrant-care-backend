@@ -43,4 +43,15 @@ export function canManagerEditHours(status: TimesheetStatus): boolean {
   return status !== TIMESHEET_STATUS.APPROVED;
 }
 
+/** ADMIN/SUPER_ADMIN full edit of another person's timesheet (Policy 3 + manager). */
+export function canManagerFullEdit(
+  status: TimesheetStatus,
+  opts: { actorRole: string; ownerRole?: string; isOwner: boolean },
+): boolean {
+  if (status === TIMESHEET_STATUS.APPROVED || opts.isOwner) return false;
+  if (opts.actorRole === 'SUPER_ADMIN') return true;
+  if (opts.actorRole === 'ADMIN' && opts.ownerRole !== 'ADMIN') return true;
+  return false;
+}
+
 export { TIMESHEET_STATUS };

@@ -14,6 +14,7 @@ import { getSettings } from '../services/authService.js';
 import {
   assertTransition,
   canManagerEditHours,
+  canManagerFullEdit,
   canOwnerDelete,
   canOwnerWithdraw,
   canStaffEdit,
@@ -324,10 +325,21 @@ export async function getTimesheet(req: Request, res: Response, next: NextFuncti
 export async function updateTimesheet(req: Request, res: Response, next: NextFunction) {
   try {
     const timesheet = await loadTimesheetForUser(req);
-    if (!req.user || !['STAFF', 'ADMIN'].includes(req.user.role)) throw new ForbiddenError();
-    if (String(timesheet.userId) !== req.user.id) throw new ForbiddenError('You can only edit your own timesheets.');
+    if (!req.user || !['STAFF', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) throw new ForbiddenError();
+    const isOwner = String(timesheet.userId) === req.user.id;
     if (!canStaffEdit(timesheet.status as TimesheetStatus)) {
       throw new AppError('Approved timesheets cannot be edited.');
+    }
+    const isManager = canManagerFullEdit(timesheet.status as TimesheetStatus, {
+      actorRole: req.user.role,
+      ownerRole: timesheet.ownerRole,
+      isOwner,
+    });
+    if (isOwner && !['STAFF', 'ADMIN'].includes(req.user.role)) {
+      throw new ForbiddenError('You can only edit your own timesheets.');
+    }
+    if (!isOwner && !isManager) {
+      throw new ForbiddenError('You can only edit your own timesheets, or staff timesheets as a manager.');
     }
     const settings = await getSettings();
     const startTime = req.body.startTime ?? timesheet.startTime;
@@ -348,7 +360,9 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
     }
 
     if (timesheet.ownerRole !== 'ADMIN' && req.body.jobRoleId) {
-      const employee = await Employee.findOne({ userId: req.user.id }).populate([...EMPLOYEE_POPULATE]);
+      const employee = timesheet.employeeId
+        ? await Employee.findById(timesheet.employeeId).populate([...EMPLOYEE_POPULATE])
+        : await Employee.findOne({ userId: timesheet.userId }).populate([...EMPLOYEE_POPULATE]);
       if (!employee) throw new ForbiddenError('Employee profile not found.');
       const jobRole = resolveStaffTimesheetJobRole(employee, req.body.jobRoleId);
       if (!jobRole) throw new AppError('Select a job role.');
@@ -368,8 +382,21 @@ export async function updateTimesheet(req: Request, res: Response, next: NextFun
       timesheet.inchargeName = req.body.inchargeName;
     }
     if (req.body.remarks !== undefined) timesheet.remarks = req.body.remarks;
-    if (req.user.role === 'STAFF' && req.body.careHomeSignature?.startsWith('data:image')) {
+    if (
+      timesheet.ownerRole !== 'ADMIN'
+      && req.body.careHomeSignature?.startsWith('data:image')
+      && (req.user.role === 'STAFF' || isManager)
+    ) {
       timesheet.careHomeSignaturePath = await storageService.saveBase64Image(req.body.careHomeSignature, 'signatures');
+    }
+    if (isManager) {
+      timesheet.history.push({
+        status: timesheet.status,
+        actorId: req.user.id,
+        actorName: req.user.name,
+        note: `Corrected by ${req.user.name}`,
+        at: new Date(),
+      });
     }
     await timesheet.save();
     await recalculateProductiveHoursForUserWeek(String(timesheet.userId), timesheet.date);
@@ -554,8 +581,13 @@ export async function deleteTimesheet(req: Request, res: Response, next: NextFun
       return;
     }
 
-    if (!['STAFF', 'ADMIN'].includes(req.user.role) || !isOwner) {
-      throw new ForbiddenError('You can only delete your own timesheets.');
+    const isStaffSheet = timesheet.ownerRole !== 'ADMIN';
+    const isAdminManager = req.user.role === 'ADMIN' && isStaffSheet && !isOwner;
+    if (req.user.role === 'ADMIN' && !isOwner && !isStaffSheet) {
+      throw new ForbiddenError('Only a Super Admin can delete another admin\'s timesheet.');
+    }
+    if (!['STAFF', 'ADMIN'].includes(req.user.role) || (!isOwner && !isAdminManager)) {
+      throw new ForbiddenError('You can only delete your own timesheets, or staff timesheets as an admin.');
     }
     if (!canOwnerDelete(status)) {
       throw new AppError('Approved timesheets cannot be deleted.');
