@@ -4,6 +4,7 @@ import type { Response } from 'express';
 import {
   generateGroupedTimesheetPdf,
   generateTimesheetPdf,
+  sheetPeriodLabel,
   streamGroupedTimesheetPdf,
   withPdfExportLock,
 } from './pdfService.js';
@@ -90,5 +91,21 @@ describe('PDF generation', () => {
 
     release();
     await expect(first).resolves.toBe('done');
+  });
+});
+
+describe('sheetPeriodLabel', () => {
+  const dates = [new Date('2026-11-24'), new Date('2026-11-25')];
+
+  it('uses the selected filter range when provided', () => {
+    expect(sheetPeriodLabel(dates, { from: '2026-11-23', to: '2026-11-29' })).toBe('23/11/2026 - 29/11/2026');
+  });
+
+  it('falls back to entry dates without a range', () => {
+    expect(sheetPeriodLabel(dates)).toBe('24/11/2026 - 25/11/2026');
+  });
+
+  it('fills an open end from entry dates', () => {
+    expect(sheetPeriodLabel(dates, { from: '2026-11-01' })).toBe('01/11/2026 - 25/11/2026');
   });
 });

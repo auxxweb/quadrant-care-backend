@@ -90,7 +90,11 @@ export async function sendTimesheetExport(
     if (!items.length) throw new AppError('No timesheets match the current filters.');
     assertPdfExportSize(items.length);
     await withPdfExportLock(async () => {
-      await streamGroupedTimesheetPdf(res, groupTimesheetsForPdf(items), { productiveOnly });
+      await streamGroupedTimesheetPdf(res, groupTimesheetsForPdf(items), {
+        productiveOnly,
+        from: typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined,
+      });
     });
     return;
   }

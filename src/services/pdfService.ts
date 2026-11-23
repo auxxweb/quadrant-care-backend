@@ -14,7 +14,12 @@ const MAX_PNG_DECODE_MB = 32;
 const SIGNATURE_ROW_HEIGHT = 16;
 const SIGNATURE_FOOTER_HEIGHT = 28;
 
-type PdfOptions = { productiveOnly?: boolean };
+type PdfOptions = {
+  productiveOnly?: boolean;
+  /** Selected date-range filter (YYYY-MM-DD); shown as the sheet period when set. */
+  from?: string;
+  to?: string;
+};
 
 let pdfExportBusy = false;
 
@@ -44,6 +49,21 @@ function yieldEventLoop() {
 
 function formatDate(value: Date) {
   return value.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+}
+
+function formatDateKey(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return formatDate(new Date(value));
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+/** Period label: the selected filter range when given, else first–last entry date. */
+export function sheetPeriodLabel(dates: Array<Date | string>, range: { from?: string; to?: string } = {}) {
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const start = range.from ? formatDateKey(range.from) : first ? formatDate(new Date(first)) : '';
+  const end = range.to ? formatDateKey(range.to) : last ? formatDate(new Date(last)) : '';
+  return `${start} - ${end}`;
 }
 
 function formatClockHours(totalMinutes: number) {
@@ -148,8 +168,8 @@ async function drawTimesheetPage(
   doc.rect(left + 180, 72, 180, 18).fill('#334155');
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text('TIME SHEET', left + 180, 76, { width: 180, align: 'center' });
 
-  const week = `${formatDate(new Date(items[0].date))} - ${formatDate(new Date(items[items.length - 1].date))}`;
-  doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(`WEEK: ${week}`, left, 98, { width, align: 'right' });
+  const period = sheetPeriodLabel(items.map((item) => item.date), { from: options.from, to: options.to });
+  doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(`PERIOD: ${period}`, left, 98, { width, align: 'right' });
 
   const dotted = (label: string, value: string, x: number, yPos: number, w: number) => {
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text(label, x, yPos, { width: 70 });
